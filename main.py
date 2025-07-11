@@ -75,20 +75,47 @@ def main():
             
             if resultado_colisao == 1:  # Colisão normal - Pacman perde vida
                 vidas_perdidas = True
-                # Resetar posições
+                # Resetar posição do Pacman
                 start_pos = encontrar_posicao_inicial(MAPA)
                 pacman.x, pacman.y = start_pos
                 
-                # Resetar posições dos fantasmas
+                # Manter os fantasmas onde estão, apenas devolvê-los ao estado normal
+                # Isso é mais realista e evita problemas com fantasmas presos
                 for f in fantasmas:
-                    pos_x, pos_y = encontrar_posicao_fantasma(MAPA)
-                    f.x, f.y = pos_x, pos_y
                     f.voltar_ao_normal()
                 break
                 
             elif resultado_colisao == 2:  # Fantasma é comido
                 fantasma.foi_comido()
                 pontuacao += 200  # Pontuação por comer um fantasma
+        
+        # Verificar colisões entre fantasmas
+        fantasmas_colidiram = set()  # Conjunto para rastrear quais fantasmas já colidiram
+        
+        # Otimização: só verificar colisões se tivermos mais de um fantasma
+        if len(fantasmas) > 1:
+            for i, fantasma1 in enumerate(fantasmas):
+                for j, fantasma2 in enumerate(fantasmas[i+1:], i+1):  # Evitar verificar o mesmo par duas vezes
+                    # Ignorar se algum deles já colidiu neste frame ou está em estado COMIDO
+                    if (i in fantasmas_colidiram or j in fantasmas_colidiram or 
+                        fantasma1.estado == Ghost.COMIDO or fantasma2.estado == Ghost.COMIDO):
+                        continue
+                    
+                    # Otimização: pré-verificação de distância para evitar cálculos desnecessários
+                    # Se os fantasmas estão longe um do outro, não precisamos verificar colisão
+                    dist_aprox = abs(fantasma1.x - fantasma2.x) + abs(fantasma1.y - fantasma2.y)
+                    if dist_aprox > TILE_SIZE * 1.5:  # Distância de Manhattan como filtro rápido
+                        continue
+                    
+                    # Verificar colisão precisa
+                    if fantasma1.verificar_colisao_com_fantasma(fantasma2):
+                        # Ambos os fantasmas mudam de direção
+                        fantasma1.reagir_a_colisao(MAPA)
+                        fantasma2.reagir_a_colisao(MAPA)
+                        
+                        # Adicionar ao conjunto de fantasmas que já colidiram
+                        fantasmas_colidiram.add(i)
+                        fantasmas_colidiram.add(j)
                 
         # Verificar se todos os pontos foram coletados
         pontos_restantes = 0
@@ -271,9 +298,9 @@ def criar_fantasmas(mapa):
     
     # Lista de personalidades para os fantasmas
     personalidades = ["perseguidor", "emboscador", "vagante", "imprevisível"]
-    
-    # Criar um fantasma para cada sprite disponível (até 4)
-    for i, sprite_path in enumerate(sprite_paths[:4]):
+
+    # Criar um fantasma para cada sprite disponível (até 5)
+    for i, sprite_path in enumerate(sprite_paths[:5]):
         # Encontrar uma posição inicial para o fantasma na casa dos fantasmas
         pos_x, pos_y = encontrar_posicao_fantasma(mapa)
         
