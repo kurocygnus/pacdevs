@@ -28,8 +28,17 @@ class Ghost:
     PERSEGUIR = 0  # Perseguir o pacman
     DISPERSAR = 1  # Ir para cantos específicos
     ASSUSTADO = 2  # Movimento aleatório quando vulnerável
+    SAINDO_CASA = 3  # Sair da casa dos fantasmas
 
-    def __init__(self, x, y, sprite_path, tile_size, personalidade="perseguidor"):
+    def __init__(
+        self,
+        x,
+        y,
+        sprite_path,
+        tile_size,
+        personalidade="perseguidor",
+        atraso_saida=0,
+    ):
         """
         Inicializa um novo fantasma.
 
@@ -46,12 +55,13 @@ class Ghost:
         self.sprite = GhostSprite(sprite_path)
         self.velocidade = 4
         self.estado = self.NORMAL
-        self.modo = self.PERSEGUIR
+        self.modo = self.SAINDO_CASA if atraso_saida == 0 else self.DISPERSAR
         self.personalidade = personalidade
-        self.direcao_atual = random.choice(["up", "down", "left", "right"])
+        self.direcao_atual = "left" if atraso_saida == 0 else "up"
         self.tempo_vulneravel = 0
         self.tempo_modo_atual = 0
         self.tempo_total = 0
+        self.atraso_saida = atraso_saida
         self.posicao_inicio = self._alinhar_top_left_ao_tile(x, y)
         self.comido = False
 
@@ -121,7 +131,11 @@ class Ghost:
             self.estado = self.VULNERAVEL
             self.modo = self.ASSUSTADO
             self.tempo_vulneravel = duracao
-            self.velocidade = 3
+            self.velocidade = 2
+            if self._esta_centralizado():
+                self.direcao_atual = self._direcao_oposta().get(
+                    self.direcao_atual, self.direcao_atual
+                )
 
     def foi_comido(self):
         """Marca o fantasma como comido e o envia de volta para a casa"""
@@ -198,13 +212,12 @@ class Ghost:
 
     def decidir_direcao(self, pacman_x, pacman_y, mapa):
         """Escolhe a próxima direção apenas a partir do centro de um tile."""
-        ghost_col, ghost_row = self._tile_atual()
         target_x, target_y = self._calcular_alvo(pacman_x, pacman_y)
         direcoes_validas = self._direcoes_validas(mapa)
         if not direcoes_validas:
             return self.direcao_atual
 
-        if self._esta_na_casa(mapa) and self.estado != self.COMIDO:
+        if self.modo == self.SAINDO_CASA and self.estado != self.COMIDO:
             saida = self._encontrar_saida_casa(mapa)
             if saida:
                 target_x = int(saida[0] // self.tile_size)
@@ -214,53 +227,42 @@ class Ghost:
                 )
                 if proximo_passo:
                     return proximo_passo
-            ordem_saida = {"up": 0, "left": 1, "right": 1, "down": 3}
-            return min(
-                direcoes_validas,
-                key=lambda direcao: (
-                    self._distancia_do_proximo_tile(direcao, target_x, target_y),
-                    ordem_saida.get(direcao, 2),
-                ),
-            )
+            return self._melhor_direcao_para_alvo(direcoes_validas, target_x, target_y)
 
         if self.estado == self.VULNERAVEL:
-            direcao_fuga = self._melhor_direcao_de_fuga(
-                pacman_x, pacman_y, mapa, direcoes_validas
+            return self._direcao_assustada(direcoes_validas)
+
+        if self.estado == self.COMIDO:
+            proximo_passo = self._proxima_direcao_por_caminho(
+                target_x, target_y, mapa, direcoes_validas
             )
-            if direcao_fuga:
-                return direcao_fuga
+            if proximo_passo:
+                return proximo_passo
 
-        proximo_passo = self._proxima_direcao_por_caminho(
-            target_x, target_y, mapa, direcoes_validas
-        )
-        if proximo_passo:
-            return proximo_passo
+        return self._melhor_direcao_para_alvo(direcoes_validas, target_x, target_y)
 
-        ordenadas = sorted(
-            direcoes_validas,
-            key=lambda direcao: self._distancia_do_proximo_tile(
-                direcao, target_x, target_y
+    def _direcao_assustada(self, direcoes_validas):
+        """Escolhe curva pseudoaleatória no modo vulnerável."""
+        direcao_oposta = self._direcao_oposta().get(self.direcao_atual)
+        sem_re = [direcao for direcao in direcoes_validas if direcao != direcao_oposta]
+        if sem_re:
+            return random.choice(sem_re)
+        return random.choice(direcoes_validas)
+
+    def _melhor_direcao_para_alvo(self, direcoes_validas, target_x, target_y):
+        """Imita o Pac-Man original: olha um tile à frente e minimiza distância ao alvo."""
+        direcao_oposta = self._direcao_oposta().get(self.direcao_atual)
+        candidatas = [direcao for direcao in direcoes_validas if direcao != direcao_oposta]
+        if not candidatas:
+            candidatas = direcoes_validas
+
+        preferencia = {"up": 0, "left": 1, "down": 2, "right": 3}
+        return min(
+            candidatas,
+            key=lambda direcao: (
+                self._distancia_do_proximo_tile(direcao, target_x, target_y),
+                preferencia[direcao],
             ),
-        )
-
-        if self.estado == self.COMIDO or self.personalidade == "perseguidor":
-            return ordenadas[0]
-        if self.personalidade == "emboscador":
-            return (
-                ordenadas[1]
-                if len(ordenadas) > 1 and random.random() < 0.1
-                else ordenadas[0]
-            )
-        if self.personalidade == "vagante":
-            return (
-                random.choice(ordenadas[:2])
-                if len(ordenadas) > 1 and random.random() < 0.25
-                else ordenadas[0]
-            )
-        return (
-            random.choice(ordenadas[:2])
-            if len(ordenadas) > 1 and random.random() < 0.35
-            else ordenadas[0]
         )
 
     def _calcular_alvo(self, pacman_x, pacman_y):
@@ -330,23 +332,36 @@ class Ghost:
             return (target_x, target_y)
 
         elif self.personalidade == "vagante":
-            # Persegue um ponto levemente à frente do Pacman, sem abrir distância demais.
+            # Aproximação do Inky: mira um ponto à frente do Pacman e projeta a partir de si.
             offset_x, offset_y = 0, 0
             if direcao_pacman == "right":
-                offset_x = 1
+                offset_x = 2
             elif direcao_pacman == "left":
-                offset_x = -1
+                offset_x = -2
             elif direcao_pacman == "up":
-                offset_y = -1
+                offset_y = -2
+                offset_x = -2
             else:  # down
-                offset_y = 1
+                offset_y = 2
+
+            frente_x = pacman_col + offset_x
+            frente_y = pacman_row + offset_y
+            ghost_col, ghost_row = self._tile_atual()
+            alvo_x = frente_x + (frente_x - ghost_col)
+            alvo_y = frente_y + (frente_y - ghost_row)
             return (
-                max(0, min(pacman_col + offset_x, 30)),
-                max(0, min(pacman_row + offset_y, 30)),
+                max(0, min(alvo_x, 30)),
+                max(0, min(alvo_y, 30)),
             )
 
         else:  # "imprevisível" (Clyde)
-            return (pacman_col, pacman_row)
+            ghost_col, ghost_row = self._tile_atual()
+            distancia = self._calcular_distancia(
+                ghost_col, ghost_row, pacman_col, pacman_row
+            )
+            if distancia >= 8:
+                return (pacman_col, pacman_row)
+            return (1, 30)
 
     def _alinhar_top_left_ao_tile(self, x, y):
         """Converte qualquer ponto dentro do tile para o top-left daquele tile."""
@@ -385,7 +400,7 @@ class Ghost:
             "right": "left",
         }
 
-    def _esta_centralizado(self, tolerancia=2):
+    def _esta_centralizado(self, tolerancia=0):
         col, row = self._tile_atual()
         centro_x, centro_y = self._centro_do_tile(col, row)
         atual_x, atual_y = self._centro_atual()
@@ -636,12 +651,28 @@ class Ghost:
             if self.tempo_vulneravel <= 0:
                 self.voltar_ao_normal()
 
+        if (
+            self.estado == self.NORMAL
+            and self.atraso_saida > 0
+            and self._esta_na_casa(mapa)
+        ):
+            self.atraso_saida -= 1
+            if self.atraso_saida > 0:
+                return
+            self.modo = self.SAINDO_CASA
+            self.direcao_atual = "up"
+
         if not self._esta_centralizado():
             self._continuar_ate_centro_da_direcao()
             self._aplicar_portais(mapa)
             return
 
         self._snap_para_centro_do_tile()
+
+        if self.estado != self.COMIDO and self._esta_na_casa(mapa):
+            self.modo = self.SAINDO_CASA
+        elif self.modo == self.SAINDO_CASA:
+            self.modo = self.ASSUSTADO if self.estado == self.VULNERAVEL else self.PERSEGUIR
 
         if self.estado == self.COMIDO and self._esta_na_casa(mapa):
             inicio_col = int(self.posicao_inicio[0] // self.tile_size)
@@ -655,9 +686,8 @@ class Ghost:
         deve_decidir = (
             not self._pode_ir_direcao(self.direcao_atual, mapa)
             or self._esta_em_intersecao(mapa)
-            or self.estado == self.VULNERAVEL
             or self.estado == self.COMIDO
-            or self._esta_na_casa(mapa)
+            or self.modo == self.SAINDO_CASA
         )
 
         if deve_decidir:
@@ -706,30 +736,9 @@ class Ghost:
         Verifica se este fantasma colidiu com outro fantasma.
         Retorna True se colidir, False caso contrário.
         """
-        # Ignorar colisões para fantasmas comidos (estão voltando para casa)
-        if self.estado == self.COMIDO or outro_fantasma.estado == self.COMIDO:
-            return False
-
-        # Ignorar colisões dentro da casa dos fantasmas
-        if mapa is not None and (
-            self._esta_na_casa(mapa) or outro_fantasma._esta_na_casa(mapa)
-        ):
-            return False
-
-        # Distância para considerar colisão (um pouco menor que com o Pacman)
-        dist_colisao = self.tile_size * 0.6
-
-        # Calcular distância entre os centros dos fantasmas
-        self_center_x = self.x + self.tile_size // 2
-        self_center_y = self.y + self.tile_size // 2
-        outro_center_x = outro_fantasma.x + outro_fantasma.tile_size // 2
-        outro_center_y = outro_fantasma.y + outro_fantasma.tile_size // 2
-
-        distancia = self._calcular_distancia(
-            self_center_x, self_center_y, outro_center_x, outro_center_y
-        )
-
-        return distancia < dist_colisao
+        # No Pac-Man original, os fantasmas podem atravessar uns aos outros.
+        # Bloquear colisão entre eles cria engarrafamento na porta da casa.
+        return False
 
     def reagir_a_colisao(self, mapa):
         """

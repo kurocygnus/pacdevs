@@ -364,6 +364,15 @@ def encontrar_posicao_inicial(mapa):
     return TILE_SIZE, TILE_SIZE
 
 
+def encontrar_saida_fantasma(mapa):
+    """Encontra a posição fora da porta da casa dos fantasmas."""
+    for row in range(1, len(mapa)):
+        for col in range(len(mapa[0])):
+            if mapa[row][col] == CASA_FANTASMA and mapa[row - 1][col] not in [1, CASA_FANTASMA]:
+                return col * TILE_SIZE, (row - 1) * TILE_SIZE
+    return None
+
+
 def encontrar_posicao_fantasma(mapa, indice=0):
     """Encontra uma posição válida para um fantasma dentro da casa dos fantasmas."""
     altura = len(mapa)
@@ -398,12 +407,17 @@ def criar_fantasmas(mapa):
 
     # Criar um fantasma para cada sprite disponível (até 5)
     for i, sprite_path in enumerate(sprite_paths[:5]):
-        # Encontrar uma posição inicial para o fantasma na casa dos fantasmas
-        pos_x, pos_y = encontrar_posicao_fantasma(mapa, i)
+        if i == 0:
+            posicao_saida = encontrar_saida_fantasma(mapa)
+            pos_x, pos_y = posicao_saida if posicao_saida else encontrar_posicao_fantasma(mapa, i)
+            atraso_saida = 0
+        else:
+            pos_x, pos_y = encontrar_posicao_fantasma(mapa, i - 1)
+            atraso_saida = 60 * i
 
         # Criar fantasma com personalidade específica
         personalidade = personalidades[i % len(personalidades)]
-        fantasma = Ghost(pos_x, pos_y, sprite_path, TILE_SIZE, personalidade)
+        fantasma = Ghost(pos_x, pos_y, sprite_path, TILE_SIZE, personalidade, atraso_saida)
 
         # Adicionar à lista
         fantasmas.append(fantasma)
