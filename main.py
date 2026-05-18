@@ -59,11 +59,11 @@ def main():
             if mapa_atual[row][col] == 2:  # É um ponto comum
                 mapa_atual[row][col] = 0   # Remove o ponto
                 pontuacao += 10            # Incrementa pontuação
-            elif mapa_atual[row][col] == 4:  # É um power pellet
-                mapa_atual[row][col] = 0   # Remove o power pellet
-                pontuacao += 50            # Power pellets valem mais pontos
+            elif mapa_atual[row][col] == 4:  # É um bug crítico
+                mapa_atual[row][col] = 0   # Remove o bug crítico
+                pontuacao += 50            # Bugs críticos valem mais pontos
                 
-                # Quando o Pacman come um power pellet, os fantasmas ficam vulneráveis
+                # Quando o Pacman corrige um bug crítico, os fantasmas ficam vulneráveis
                 for fantasma in fantasmas:
                     fantasma.tornar_vulneravel(500)  # Vulnerável por 500 frames
                 
@@ -108,7 +108,7 @@ def main():
                         continue
                     
                     # Verificar colisão precisa
-                    if fantasma1.verificar_colisao_com_fantasma(fantasma2):
+                    if fantasma1.verificar_colisao_com_fantasma(fantasma2, MAPA):
                         # Ambos os fantasmas mudam de direção
                         fantasma1.reagir_a_colisao(MAPA)
                         fantasma2.reagir_a_colisao(MAPA)
@@ -192,12 +192,8 @@ def main():
                     pygame.draw.rect(screen, (150, 0, 0), 
                                    (tile_x, tile_y, TILE_SIZE, TILE_SIZE))
                     
-                elif mapa_atual[row][col] == 4:  # Power pellet
-                    # Power pellets pulsantes (animação simples)
-                    tamanho = TILE_SIZE // 3.5 + (TILE_SIZE // 20) * abs(pygame.time.get_ticks() % 1000 - 500) / 500
-                    pygame.draw.circle(screen, (255, 255, 255), 
-                                     (tile_x + TILE_SIZE//2, tile_y + TILE_SIZE//2), 
-                                     tamanho)
+                elif mapa_atual[row][col] == 4:  # Bug crítico
+                    desenhar_bug_critico(screen, tile_x, tile_y)
 
         # Desenhar fantasmas
         for fantasma in fantasmas:
@@ -224,6 +220,26 @@ def exibir_informacoes(screen, nivel, pontuacao):
     # Informação de pontuação
     texto_pontuacao = fonte.render(f'Pontuação: {pontuacao}', True, (255, 255, 255))
     screen.blit(texto_pontuacao, (20, 50))
+
+def desenhar_bug_critico(screen, tile_x, tile_y):
+    """Desenha o item que deixa os fantasmas vulneráveis."""
+    centro_x = tile_x + TILE_SIZE // 2
+    centro_y = tile_y + TILE_SIZE // 2
+    pulso = abs(pygame.time.get_ticks() % 800 - 400) / 400
+    raio = int(TILE_SIZE * (0.22 + pulso * 0.04))
+    cor_corpo = (220, 45, 55)
+    cor_brilho = (255, 210, 90)
+    cor_linha = (35, 10, 20)
+
+    pygame.draw.circle(screen, cor_brilho, (centro_x, centro_y), raio + 4, 2)
+    pygame.draw.ellipse(screen, cor_corpo, (centro_x - raio, centro_y - raio, raio * 2, raio * 2))
+    pygame.draw.line(screen, cor_linha, (centro_x, centro_y - raio + 2), (centro_x, centro_y + raio - 2), 2)
+    pygame.draw.circle(screen, cor_linha, (centro_x - raio // 3, centro_y - raio // 3), 2)
+    pygame.draw.circle(screen, cor_linha, (centro_x + raio // 3, centro_y - raio // 3), 2)
+
+    for offset_y in (-raio // 2, 0, raio // 2):
+        pygame.draw.line(screen, cor_linha, (centro_x - raio + 2, centro_y + offset_y), (centro_x - raio - 5, centro_y + offset_y - 3), 2)
+        pygame.draw.line(screen, cor_linha, (centro_x + raio - 2, centro_y + offset_y), (centro_x + raio + 5, centro_y + offset_y - 3), 2)
 
 def encontrar_posicao_inicial(mapa):
     """Encontra uma posição válida (corredor) para o Pacman começar."""
@@ -269,7 +285,7 @@ def encontrar_posicao_inicial(mapa):
     # Se não encontrar, retorna posição padrão
     return TILE_SIZE, TILE_SIZE
 
-def encontrar_posicao_fantasma(mapa):
+def encontrar_posicao_fantasma(mapa, indice=0):
     """Encontra uma posição válida para um fantasma dentro da casa dos fantasmas."""
     altura = len(mapa)
     largura = len(mapa[0])
@@ -281,9 +297,10 @@ def encontrar_posicao_fantasma(mapa):
             if mapa[y][x] == CASA_FANTASMA:
                 posicoes_casa.append((x, y))
     
-    # Se encontrou posições da casa, escolher uma aleatoriamente
     if posicoes_casa:
-        x, y = random.choice(posicoes_casa)
+        centro_x = largura // 2
+        posicoes_casa.sort(key=lambda pos: (abs(pos[0] - centro_x), pos[1], pos[0]))
+        x, y = posicoes_casa[indice % len(posicoes_casa)]
         return x * TILE_SIZE, y * TILE_SIZE
     
     # Se não encontrou, retornar o centro do mapa
@@ -302,11 +319,7 @@ def criar_fantasmas(mapa):
     # Criar um fantasma para cada sprite disponível (até 5)
     for i, sprite_path in enumerate(sprite_paths[:5]):
         # Encontrar uma posição inicial para o fantasma na casa dos fantasmas
-        pos_x, pos_y = encontrar_posicao_fantasma(mapa)
-        
-        # Pequeno deslocamento para evitar sobreposição exata
-        pos_x += random.randint(-5, 5)
-        pos_y += random.randint(-5, 5)
+        pos_x, pos_y = encontrar_posicao_fantasma(mapa, i)
         
         # Criar fantasma com personalidade específica
         personalidade = personalidades[i % len(personalidades)]

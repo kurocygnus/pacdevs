@@ -136,15 +136,38 @@ class Pacman:
         
         # Portais horizontais (esquerda/direita)
         if self.x < -TILE_SIZE:
-            self.x = largura_tela - self.velocidade
+            self._teletransportar_horizontal(mapa, "left")
         elif self.x >= largura_tela:
-            self.x = 0
+            self._teletransportar_horizontal(mapa, "right")
             
         # Portais verticais (cima/baixo)
         if self.y < -TILE_SIZE:
             self.y = altura_tela - self.velocidade
         elif self.y >= altura_tela:
             self.y = 0
+
+    def _teletransportar_horizontal(self, mapa, lado_saida):
+        """Move para o outro lado apenas em uma linha de portal válida."""
+        row = int((self.y + TILE_SIZE // 2) // TILE_SIZE)
+        largura = len(mapa[0])
+
+        if not (0 <= row < len(mapa)):
+            self.x = 0 if lado_saida == "right" else (largura - 1) * TILE_SIZE
+            return
+
+        portal_valido = mapa[row][0] != 1 and mapa[row][largura - 1] != 1
+        if not portal_valido:
+            if lado_saida == "left":
+                self.x = 0
+            else:
+                self.x = (largura - 1) * TILE_SIZE
+            return
+
+        self.y = row * TILE_SIZE
+        if lado_saida == "left":
+            self.x = (largura - 1) * TILE_SIZE
+        else:
+            self.x = 0
     
     def centralizar_nos_corredores(self):
         """Ajuda a centralizar o Pac-Man nos corredores para evitar colisões com paredes."""
