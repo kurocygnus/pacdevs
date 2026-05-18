@@ -1,0 +1,35 @@
+[MASTER]
+ignore=__pycache__,.venv,.tmp
+persistent=no
+
+[FORMAT]
+max-line-length=120
+
+[MESSAGES CONTROL]
+disable=
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    invalid-name,
+    wrong-import-order,
+    import-outside-toplevel,
+    global-statement,
+    too-few-public-methods,
+    too-many-instance-attributes,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-locals,
+    too-many-return-statements,
+    too-many-branches,
+    too-many-statements,
+    too-many-boolean-expressions,
+    no-else-return,
+    no-else-break,
+    consider-using-enumerate,
+    consider-using-in,
+    protected-access,
+    superfluous-parens,
+    no-member,
+    unused-argument,
+    unused-variable,
+    bare-except
