@@ -31,30 +31,31 @@ MAPA_PACMAN_ORIGINAL = [
     [1, 2, 2, 2, 2, 1, 2, 2, 2, 1, 2, 2, 2, 1, 2, 2, 2, 2, 1],
     [1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1],
     [1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1],
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
 ]
+
 
 def gerar_labirinto(blocos_largura=4, blocos_altura=3, nivel=1):
     """
     Gera um labirinto estilo Pac-Man proceduralmente.
     O parâmetro nível permite criar mapas diferentes para cada fase.
-    
+
     Args:
         blocos_largura: Número de blocos na largura do mapa
         blocos_altura: Número de blocos na altura do mapa
         nivel: Nível atual do jogo (influencia a geração)
-        
+
     Returns:
         Uma matriz 2D representando o labirinto
     """
     # Dimensões do mapa - garantir tamanhos mínimos e que a largura seja ímpar
     largura = max(19, blocos_largura * 4 + 1)
     altura = max(22, blocos_altura * 4 + 1)
-    
+
     # Ajustar para garantir que largura seja ímpar e altura seja par
     largura = largura if largura % 2 == 1 else largura + 1
     altura = altura if altura % 2 == 0 else altura + 1
-    
+
     # Seed determinística: o mesmo nível sempre gera o mesmo mapa.
     seed = nivel * 1009 + largura * 37 + altura * 73
     gerador = random.Random(seed)
@@ -70,8 +71,9 @@ def gerar_labirinto(blocos_largura=4, blocos_altura=3, nivel=1):
     _aplicar_variacoes_controladas(mapa, nivel, gerador)
     mapa = garantir_conectividade(mapa, gerador)
     mapa_final = combinar_mapas(mapa, nivel, gerador)
-    
+
     return mapa_final
+
 
 def _estrutura_do_mapa_original():
     """Usa o desenho clássico como base estrutural sem pontos."""
@@ -87,6 +89,7 @@ def _estrutura_do_mapa_original():
                 nova_linha.append(CORREDOR)
         mapa.append(nova_linha)
     return mapa
+
 
 def _criar_labirinto_estruturado(largura, altura):
     """Cria um labirinto simétrico com corredores principais garantidos."""
@@ -112,6 +115,7 @@ def _criar_labirinto_estruturado(largura, altura):
                 mapa[y][espelho_x] = PAREDE
 
     return mapa
+
 
 def _aplicar_variacoes_controladas(mapa, nivel, gerador):
     """Faz pequenas mudanças simétricas, mantendo o mapa conectado."""
@@ -142,12 +146,17 @@ def _aplicar_variacoes_controladas(mapa, nivel, gerador):
         mapa[y][x] = novo_valor
         mapa[y][espelho_x] = novo_valor
 
-        if not _mapa_conectado(mapa) or _cria_bloco_ruim(mapa, x, y) or _cria_bloco_ruim(mapa, espelho_x, y):
+        if (
+            not _mapa_conectado(mapa)
+            or _cria_bloco_ruim(mapa, x, y)
+            or _cria_bloco_ruim(mapa, espelho_x, y)
+        ):
             mapa[y][x] = antigo_esquerdo
             mapa[y][espelho_x] = antigo_direito
             continue
 
         mudancas += 1
+
 
 def _eh_area_protegida(mapa, x, y):
     altura = len(mapa)
@@ -162,6 +171,7 @@ def _eh_area_protegida(mapa, x, y):
     if y in (altura // 2, altura // 2 + 1):
         return True
     return False
+
 
 def _cria_bloco_ruim(mapa, x, y):
     """Evita blocos 2x2 fechados/abertos demais, que deixam o mapa com ruído visual."""
@@ -180,6 +190,7 @@ def _cria_bloco_ruim(mapa, x, y):
                 return True
     return False
 
+
 def criar_casa_fantasmas(mapa, largura, altura, gerador=None):
     """
     Cria a área central para os fantasmas, típica do Pac-Man.
@@ -188,43 +199,43 @@ def criar_casa_fantasmas(mapa, largura, altura, gerador=None):
     # Se não foi fornecido gerador, usa o módulo random padrão
     if gerador is None:
         gerador = random
-        
+
     centro_x = largura // 2
-    
+
     # No Pac-Man original, a casa dos fantasmas fica um pouco acima do centro
     centro_y = altura // 2 - altura // 10
-    
+
     base_largura = min(7, largura // 3)
     base_altura = min(5, altura // 5)
 
     casa_largura = base_largura
     casa_altura = base_altura
-    
+
     # Garantir que as dimensões sejam ímpares para manter a porta centralizada
     casa_largura = casa_largura if casa_largura % 2 == 1 else casa_largura + 1
     casa_altura = casa_altura if casa_altura % 2 == 1 else casa_altura + 1
-    
+
     # Calcular os limites da casa
     inicio_x = centro_x - casa_largura // 2
     inicio_y = centro_y - casa_altura // 2
     fim_x = inicio_x + casa_largura
     fim_y = inicio_y + casa_altura
-    
+
     # Criar a casa dos fantasmas
     for y in range(inicio_y, fim_y):
         for x in range(inicio_x, fim_x):
             # Borda da casa
-            if (y == inicio_y or y == fim_y - 1 or 
-                x == inicio_x or x == fim_x - 1):
+            if y == inicio_y or y == fim_y - 1 or x == inicio_x or x == fim_x - 1:
                 mapa[y][x] = PAREDE
             else:
                 mapa[y][x] = CASA_FANTASMA
-    
+
     # Criar porta na parte superior da casa (sempre presente)
     mapa[inicio_y][centro_x] = CORREDOR
     if inicio_y > 1:
         mapa[inicio_y - 1][centro_x] = CORREDOR
-    
+
+
 def adicionar_power_pellets_cantos(mapa, mapa_pontos, nivel=1, gerador=None):
     """
     Adiciona bugs críticos no mapa, com variação baseada no nível.
@@ -236,22 +247,22 @@ def adicionar_power_pellets_cantos(mapa, mapa_pontos, nivel=1, gerador=None):
         gerador = random
     altura = len(mapa)
     largura = len(mapa[0])
-    
+
     # Número base de bugs críticos (normalmente 4, como no original)
     num_power_pellets = 4
-    
+
     # A cada 3 níveis, adiciona um bug crítico extra (até o limite de 8)
     num_extras = min(4, nivel // 3)
     num_power_pellets += num_extras
-    
+
     # Posições tradicionais dos itens especiais (próximas aos cantos)
     posicoes_cantos = [
-        (2, 2),                    # Superior esquerdo
-        (2, largura - 3),          # Superior direito
-        (altura - 3, 2),           # Inferior esquerdo
-        (altura - 3, largura - 3)  # Inferior direito
+        (2, 2),  # Superior esquerdo
+        (2, largura - 3),  # Superior direito
+        (altura - 3, 2),  # Inferior esquerdo
+        (altura - 3, largura - 3),  # Inferior direito
     ]
-    
+
     # Adicionar bugs críticos nos cantos (sempre presente)
     for y, x in posicoes_cantos:
         # Encontrar o ponto de corredor mais próximo se a posição exata não for válida
@@ -261,8 +272,11 @@ def adicionar_power_pellets_cantos(mapa, mapa_pontos, nivel=1, gerador=None):
             for dy in range(-2, 3):
                 for dx in range(-2, 3):
                     ny, nx = y + dy, x + dx
-                    if (0 <= ny < altura and 0 <= nx < largura and 
-                        mapa[ny][nx] == CORREDOR):
+                    if (
+                        0 <= ny < altura
+                        and 0 <= nx < largura
+                        and mapa[ny][nx] == CORREDOR
+                    ):
                         mapa_pontos[ny][nx] = POWER_PELLET
                         encontrou = True
                         break
@@ -270,30 +284,33 @@ def adicionar_power_pellets_cantos(mapa, mapa_pontos, nivel=1, gerador=None):
                     break
         else:
             mapa_pontos[y][x] = POWER_PELLET
-    
+
     # Adicionar bugs críticos extras em posições estratégicas (para níveis avançados)
     if num_extras > 0:
         # Posições potenciais para bugs críticos extras
         candidatos = []
-        
+
         # Dividir o mapa em quadrantes para distribuição uniforme
         quadrantes = [
-            (altura // 4, largura // 4),                   # Superior esquerdo
-            (altura // 4, largura - largura // 4),         # Superior direito
-            (altura - altura // 4, largura // 4),          # Inferior esquerdo
-            (altura - altura // 4, largura - largura // 4) # Inferior direito
+            (altura // 4, largura // 4),  # Superior esquerdo
+            (altura // 4, largura - largura // 4),  # Superior direito
+            (altura - altura // 4, largura // 4),  # Inferior esquerdo
+            (altura - altura // 4, largura - largura // 4),  # Inferior direito
         ]
-        
+
         # Para cada quadrante, encontrar posições de corredor candidatas
         for quad_y, quad_x in quadrantes:
             for dy in range(-5, 6):
                 for dx in range(-5, 6):
                     y, x = quad_y + dy, quad_x + dx
-                    if (0 <= y < altura and 0 <= x < largura and 
-                        mapa[y][x] == CORREDOR and
-                        not any((y == cy and x == cx) for cy, cx in posicoes_cantos)):
+                    if (
+                        0 <= y < altura
+                        and 0 <= x < largura
+                        and mapa[y][x] == CORREDOR
+                        and not any((y == cy and x == cx) for cy, cx in posicoes_cantos)
+                    ):
                         candidatos.append((y, x))
-        
+
         # Adicionar bugs críticos extras em posições aleatórias
         if candidatos:
             # Embaralhar para aleatoriedade
@@ -302,7 +319,9 @@ def adicionar_power_pellets_cantos(mapa, mapa_pontos, nivel=1, gerador=None):
                 y, x = candidatos[i]
                 mapa_pontos[y][x] = POWER_PELLET
 
+
 # Esta função foi removida para evitar duplicação
+
 
 def gerar_portais(mapa, nivel=1, gerador=None):
     """
@@ -314,20 +333,21 @@ def gerar_portais(mapa, nivel=1, gerador=None):
         gerador = random
     altura = len(mapa)
     largura = len(mapa[0])
-    
+
     portal_y = min(altura - 3, altura // 2 + 1)
-    
+
     # Criar portal esquerdo
     for x in range(3):
         mapa[portal_y][x] = CORREDOR
-    
+
     # Criar portal direito
     for x in range(largura - 3, largura):
         mapa[portal_y][x] = CORREDOR
-    
+
     for x in range(largura):
         if mapa[portal_y][x] != CASA_FANTASMA:
             mapa[portal_y][x] = CORREDOR
+
 
 def combinar_mapas(mapa, nivel=1, gerador=None):
     """
@@ -349,7 +369,7 @@ def combinar_mapas(mapa, nivel=1, gerador=None):
     adicionar_power_pellets_cantos(mapa, mapa_pontos, nivel, gerador)
 
     mapa_final = [[0 for _ in range(largura)] for _ in range(altura)]
-    
+
     for y in range(altura):
         for x in range(largura):
             if mapa[y][x] == PAREDE:  # Parede
@@ -365,6 +385,7 @@ def combinar_mapas(mapa, nivel=1, gerador=None):
 
     return mapa_final
 
+
 def _celulas_andaveis(mapa):
     altura = len(mapa)
     largura = len(mapa[0])
@@ -372,6 +393,7 @@ def _celulas_andaveis(mapa):
         for x in range(largura):
             if mapa[y][x] != PAREDE:
                 yield x, y
+
 
 def _mapa_conectado(mapa):
     celulas = list(_celulas_andaveis(mapa))
@@ -397,43 +419,50 @@ def _mapa_conectado(mapa):
 
     return len(visitados) == len(celulas)
 
+
 def garantir_conectividade(mapa, gerador=None):
     """
     Verifica e garante que todo o labirinto está conectado.
     Se houver áreas isoladas, cria conexões entre elas.
-    
+
     Args:
         mapa: A matriz 2D representando o labirinto
         gerador: O gerador de números aleatórios
-        
+
     Returns:
         O mapa com conectividade garantida
     """
     if gerador is None:
         gerador = random
-        
+
     altura = len(mapa)
     largura = len(mapa[0])
-    
+
     # Algoritmo Flood Fill para marcar áreas conectadas
     def flood_fill(mapa, matriz_visitados, x, y, area_atual):
         # Verificar limites e se a célula é válida para visita
-        if (x < 0 or y < 0 or x >= largura or y >= altura or
-            mapa[y][x] == PAREDE or matriz_visitados[y][x] != -1):
+        if (
+            x < 0
+            or y < 0
+            or x >= largura
+            or y >= altura
+            or mapa[y][x] == PAREDE
+            or matriz_visitados[y][x] != -1
+        ):
             return
-        
+
         # Marcar como visitado com o ID da área atual
         matriz_visitados[y][x] = area_atual
-        
+
         # Visitar os 4 vizinhos (cima, baixo, esquerda, direita)
-        flood_fill(mapa, matriz_visitados, x, y-1, area_atual)
-        flood_fill(mapa, matriz_visitados, x, y+1, area_atual)
-        flood_fill(mapa, matriz_visitados, x-1, y, area_atual)
-        flood_fill(mapa, matriz_visitados, x+1, y, area_atual)
-    
+        flood_fill(mapa, matriz_visitados, x, y - 1, area_atual)
+        flood_fill(mapa, matriz_visitados, x, y + 1, area_atual)
+        flood_fill(mapa, matriz_visitados, x - 1, y, area_atual)
+        flood_fill(mapa, matriz_visitados, x + 1, y, area_atual)
+
     # Criar matriz para marcar áreas (-1 = não visitado)
     matriz_visitados = [[-1 for _ in range(largura)] for _ in range(altura)]
-    
+
     # Identificar áreas distintas
     area_atual = 0
     for y in range(altura):
@@ -441,11 +470,11 @@ def garantir_conectividade(mapa, gerador=None):
             if mapa[y][x] != PAREDE and matriz_visitados[y][x] == -1:
                 flood_fill(mapa, matriz_visitados, x, y, area_atual)
                 area_atual += 1
-    
+
     # Se houver apenas uma área, o mapa já está todo conectado
     if area_atual <= 1:
         return mapa
-    
+
     # Para cada área (exceto a primeira), criar uma conexão com outra área
     for area_id in range(1, area_atual):
         # Encontrar todas as células desta área
@@ -454,7 +483,7 @@ def garantir_conectividade(mapa, gerador=None):
             for x in range(largura):
                 if matriz_visitados[y][x] == area_id:
                     celulas_area.append((x, y))
-        
+
         # Para cada célula desta área, verificar se há uma célula adjacente
         # que pertence a outra área conectada
         conexoes_possiveis = []
@@ -462,18 +491,23 @@ def garantir_conectividade(mapa, gerador=None):
             # Verificar os 4 vizinhos
             for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
                 nx, ny = x + dx, y + dy
-                
-                if (0 <= nx < largura and 0 <= ny < altura and 
-                    mapa[ny][nx] == PAREDE and  # É uma parede que podemos derrubar
+
+                if (
+                    0 <= nx < largura
+                    and 0 <= ny < altura
+                    and mapa[ny][nx] == PAREDE  # É uma parede que podemos derrubar
+                    and
                     # Verificar se o próximo após a parede é outra área (não esta mesma)
-                    0 <= nx + dx < largura and 0 <= ny + dy < altura and
-                    matriz_visitados[ny + dy][nx + dx] != -1 and
-                    matriz_visitados[ny + dy][nx + dx] != area_id):
+                    0 <= nx + dx < largura
+                    and 0 <= ny + dy < altura
+                    and matriz_visitados[ny + dy][nx + dx] != -1
+                    and matriz_visitados[ny + dy][nx + dx] != area_id
+                ):
                     conexoes_possiveis.append((nx, ny))
-        
+
         # Se encontrou pontos de conexão possíveis, escolher um aleatoriamente
         if conexoes_possiveis:
             x, y = gerador.choice(conexoes_possiveis)
             mapa[y][x] = CORREDOR  # Transformar a parede em corredor
-        
+
     return mapa

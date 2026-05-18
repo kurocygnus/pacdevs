@@ -1,6 +1,5 @@
 from pacman_sprite import PacmanSprite
 import pygame
-import os
 from maze_generator import gerar_labirinto
 
 # Configurações iniciais
@@ -22,6 +21,7 @@ MAPA = gerar_labirinto(4, 3)
 # Variável global para compartilhar a direção do Pacman com os fantasmas
 direcao_pacman_global = "right"
 
+
 class Pacman:
     def __init__(self, x, y, sprites: PacmanSprite):
         self.x = x
@@ -36,7 +36,7 @@ class Pacman:
 
     def processar_input(self, teclas):
         global direcao_pacman_global
-        
+
         if teclas[pygame.K_UP]:
             self.direcao_desejada = "up"
         elif teclas[pygame.K_DOWN]:
@@ -45,7 +45,7 @@ class Pacman:
             self.direcao_desejada = "left"
         elif teclas[pygame.K_RIGHT]:
             self.direcao_desejada = "right"
-            
+
         # Atualizar a variável global quando a direção mudar
         if self.direcao_desejada == self.direcao:
             direcao_pacman_global = self.direcao
@@ -54,19 +54,19 @@ class Pacman:
         # Use o mapa fornecido ou o mapa padrão
         if mapa is None:
             mapa = MAPA
-            
+
         # Inicializar valores padrão
         nova_x = self.x
         nova_y = self.y
-        
+
         # Hitbox menor para o Pac-Man (para que ele possa passar por corredores mais estreitos)
         margem = TILE_SIZE // 4  # Margem para tornar a hitbox do Pac-Man menor
         hitbox_tamanho = TILE_SIZE - 2 * margem
-        
+
         # Centro do Pac-Man
         centro_x = self.x + TILE_SIZE // 2
         centro_y = self.y + TILE_SIZE // 2
-        
+
         # Calcular nova posição conforme a direção
         if direcao == "up":
             nova_y = self.y - self.velocidade
@@ -76,31 +76,40 @@ class Pacman:
             nova_x = self.x - self.velocidade
         elif direcao == "right":
             nova_x = self.x + self.velocidade
-        
+
         # Pontos de colisão (usando uma hitbox menor para passar em corredores mais estreitos)
         pontos_colisao = [
             (nova_x + margem, nova_y + margem),  # Superior esquerdo da hitbox
-            (nova_x + margem + hitbox_tamanho, nova_y + margem),  # Superior direito da hitbox
-            (nova_x + margem, nova_y + margem + hitbox_tamanho),  # Inferior esquerdo da hitbox
-            (nova_x + margem + hitbox_tamanho, nova_y + margem + hitbox_tamanho)  # Inferior direito da hitbox
+            (
+                nova_x + margem + hitbox_tamanho,
+                nova_y + margem,
+            ),  # Superior direito da hitbox
+            (
+                nova_x + margem,
+                nova_y + margem + hitbox_tamanho,
+            ),  # Inferior esquerdo da hitbox
+            (
+                nova_x + margem + hitbox_tamanho,
+                nova_y + margem + hitbox_tamanho,
+            ),  # Inferior direito da hitbox
         ]
-        
+
         # Verificar colisão nos quatro cantos da hitbox
         for ponto_x, ponto_y in pontos_colisao:
             col = ponto_x // TILE_SIZE
             row = ponto_y // TILE_SIZE
-            
+
             # Verificar limites do mapa
             if not (0 <= row < len(mapa) and 0 <= col < len(mapa[0])):
                 continue  # Pular para o próximo ponto se estiver fora dos limites
-                
+
             # Verificar colisões
             if mapa[row][col] == 1:  # Parede
                 return False  # Não pode mover
             if mapa[row][col] == 3:  # Casa dos fantasmas
                 # Só permite passar pela porta designada
                 return False
-                
+
         # Se chegou aqui, não colidiu com nenhuma parede
         return True
 
@@ -108,14 +117,14 @@ class Pacman:
         # Use o mapa fornecido ou o mapa padrão
         if mapa is None:
             mapa = MAPA
-        
+
         # Centralizar o pacman nos corredores
         self.centralizar_nos_corredores()
-            
+
         # Tenta mudar de direção se possível
         if self.pode_mover_para(self.direcao_desejada, mapa):
             self.direcao = self.direcao_desejada
-            
+
             # Atualiza a variável global quando a direção realmente mudar
             global direcao_pacman_global
             direcao_pacman_global = self.direcao
@@ -129,17 +138,17 @@ class Pacman:
                 self.x -= self.velocidade
             elif self.direcao == "right":
                 self.x += self.velocidade
-                
+
         # Verificar se passou pelos limites da tela (portal tipo Pac-Man)
         largura_tela = len(mapa[0]) * TILE_SIZE
         altura_tela = len(mapa) * TILE_SIZE
-        
+
         # Portais horizontais (esquerda/direita)
         if self.x < -TILE_SIZE:
             self._teletransportar_horizontal(mapa, "left")
         elif self.x >= largura_tela:
             self._teletransportar_horizontal(mapa, "right")
-            
+
         # Portais verticais (cima/baixo)
         if self.y < -TILE_SIZE:
             self.y = altura_tela - self.velocidade
@@ -168,7 +177,7 @@ class Pacman:
             self.x = (largura - 1) * TILE_SIZE
         else:
             self.x = 0
-    
+
     def centralizar_nos_corredores(self):
         """Ajuda a centralizar o Pac-Man nos corredores para evitar colisões com paredes."""
         # Se estamos se movendo horizontalmente, ajuste a posição vertical
@@ -177,27 +186,31 @@ class Pacman:
             tile_y = (self.y // TILE_SIZE) * TILE_SIZE + TILE_SIZE // 2
             # Distância do centro do Pac-Man ao centro do tile
             dist_y = abs(self.y + TILE_SIZE // 2 - tile_y)
-            
+
             # Ser mais sensível ao centralizar (para corredores mais estreitos)
             if dist_y < self.velocidade * 2:
                 # Centralizar gradualmente para um movimento mais suave
-                ajuste = min(self.velocidade // 2, abs(self.y + TILE_SIZE // 2 - tile_y))
+                ajuste = min(
+                    self.velocidade // 2, abs(self.y + TILE_SIZE // 2 - tile_y)
+                )
                 if self.y + TILE_SIZE // 2 > tile_y:
                     self.y -= ajuste
                 elif self.y + TILE_SIZE // 2 < tile_y:
                     self.y += ajuste
-        
+
         # Se estamos se movendo verticalmente, ajuste a posição horizontal
         elif self.direcao in ["up", "down"]:
             # Calcular o centro do tile em que estamos
             tile_x = (self.x // TILE_SIZE) * TILE_SIZE + TILE_SIZE // 2
             # Distância do centro do Pac-Man ao centro do tile
             dist_x = abs(self.x + TILE_SIZE // 2 - tile_x)
-            
+
             # Ser mais sensível ao centralizar
             if dist_x < self.velocidade * 2:
                 # Centralizar gradualmente para um movimento mais suave
-                ajuste = min(self.velocidade // 2, abs(self.x + TILE_SIZE // 2 - tile_x))
+                ajuste = min(
+                    self.velocidade // 2, abs(self.x + TILE_SIZE // 2 - tile_x)
+                )
                 if self.x + TILE_SIZE // 2 > tile_x:
                     self.x -= ajuste
                 elif self.x + TILE_SIZE // 2 < tile_x:
