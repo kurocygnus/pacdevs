@@ -1,5 +1,6 @@
 import pygame
 import glob
+import random
 from pacman import Pacman
 import pacman_sprite
 from ghost import Ghost
@@ -7,13 +8,174 @@ from maze_generator import gerar_labirinto, CASA_FANTASMA
 
 TILE_SIZE = 34
 SCREEN_WIDTH, SCREEN_HEIGHT = TILE_SIZE * 20, TILE_SIZE * 15
-FPS = 10  # Controla a velocidade da animação
+FPS = 60  # Controla a velocidade da animação
+VELOCIDADE_BASE_FPS = 10
+VIDAS_INICIAIS = 3
+PONTOS_FANTASMAS_COMIDOS = (200, 400, 800, 1600)
+PONTOS_VIDA_EXTRA = 10000
+FRUIT_VALUES = (100, 300, 500, 700, 1000, 2000, 3000, 5000)
 
 # Níveis do jogo (começa no nível 1)
 nivel_atual = 1
 
 # Gera um labirinto procedural para o nível atual
 MAPA = gerar_labirinto(4, 3, nivel_atual)
+
+
+def contar_pontos(mapa):
+    """Conta pontos e energizers restantes no mapa."""
+    return sum(linha.count(2) + linha.count(4) for linha in mapa)
+
+
+def cronograma_modos(nivel):
+    """Tempos clássicos adaptados para FPS do projeto."""
+    if nivel == 1:
+        segundos = (7, 20, 7, 20, 5, 20, 5, None)
+    elif nivel <= 4:
+        segundos = (7, 20, 7, 20, 5, 1033, 1 / 60, None)
+    else:
+        segundos = (5, 20, 5, 20, 5, 1037, 1 / 60, None)
+    modos = (
+        Ghost.DISPERSAR,
+        Ghost.PERSEGUIR,
+        Ghost.DISPERSAR,
+        Ghost.PERSEGUIR,
+        Ghost.DISPERSAR,
+        Ghost.PERSEGUIR,
+        Ghost.DISPERSAR,
+        Ghost.PERSEGUIR,
+    )
+    return list(zip(modos, segundos))
+
+
+def modo_por_indice(nivel, indice):
+    return cronograma_modos(nivel)[min(indice, 7)][0]
+
+
+def atualizar_modo_global(nivel, indice, frames_modo, modo_atual):
+    cronograma = cronograma_modos(nivel)
+    _, segundos = cronograma[min(indice, len(cronograma) - 1)]
+    if segundos is None or frames_modo < max(1, round(segundos * FPS)):
+        return indice, modo_atual
+    novo_indice = min(indice + 1, len(cronograma) - 1)
+    return novo_indice, cronograma[novo_indice][0]
+
+
+def duracao_frightened(nivel):
+    if nivel == 1:
+        segundos = 6
+    elif nivel <= 4:
+        segundos = 5
+    elif nivel <= 8:
+        segundos = 3
+    elif nivel <= 18:
+        segundos = 1
+    else:
+        segundos = 0
+    return segundos * FPS
+
+
+def velocidades_por_nivel(nivel):
+    if nivel == 1:
+        velocidades = (10, 6, 3, 8, 3)
+    elif nivel <= 4:
+        velocidades = (11, 5, 3, 8, 2)
+    elif nivel <= 20:
+        velocidades = (12, 6, 3, 8, 3)
+    else:
+        velocidades = (11, 6, 0, 8, 3)
+    escala = VELOCIDADE_BASE_FPS / FPS
+    return tuple(max(0, velocidade * escala) for velocidade in velocidades)
+
+
+def aplicar_velocidades(nivel, pacman, fantasmas):
+    pac_speed, ghost_speed, scared_speed, eyes_speed, tunnel_speed = velocidades_por_nivel(
+        nivel
+    )
+    pacman.definir_velocidade(pac_speed)
+    for fantasma in fantasmas:
+        fantasma.definir_velocidades(
+            normal=ghost_speed,
+            assustado=scared_speed,
+            comido=eyes_speed,
+            tunel=tunnel_speed,
+        )
+
+
+def aplicar_modo_global(fantasmas, modo, inverter):
+    for fantasma in fantasmas:
+        fantasma.definir_modo_global(modo, inverter)
+
+
+def algum_fantasma_assustado(fantasmas):
+    return any(fantasma.estado == Ghost.VULNERAVEL for fantasma in fantasmas)
+
+
+def limites_saida_fantasmas(nivel, quantidade, apos_morte=False):
+    if apos_morte:
+        limites_base = [0, 7, 17, 32, 45, 60]
+    elif nivel == 1:
+        limites_base = [0, 0, 30, 60, 90, 120]
+    elif nivel == 2:
+        limites_base = [0, 0, 0, 50, 75, 100]
+    else:
+        limites_base = [0] * quantidade
+    if quantidade <= len(limites_base):
+        return limites_base[:quantidade]
+    extras = [limites_base[-1] + 30 * i for i in range(1, quantidade - 5)]
+    return limites_base + extras
+
+
+def liberar_fantasmas_por_pontos(fantasmas, nivel, pontos_comidos, apos_morte=False):
+    limites = limites_saida_fantasmas(nivel, len(fantasmas), apos_morte)
+    for fantasma, limite in zip(fantasmas, limites):
+        if pontos_comidos >= limite:
+            fantasma.liberar_da_casa()
+
+
+def liberar_fantasma_por_ociosidade(fantasmas, nivel, frames_sem_comer):
+    limite = (3 if nivel >= 5 else 4) * FPS
+    if frames_sem_comer < limite:
+        return frames_sem_comer
+    for fantasma in fantasmas:
+        if fantasma.atraso_saida > 0:
+            fantasma.liberar_da_casa()
+            return 0
+    return frames_sem_comer
+
+
+def posicao_fruta(mapa):
+    saida = encontrar_saida_fantasma(mapa)
+    if saida:
+        col = int(saida[0] // TILE_SIZE)
+        row = min(len(mapa) - 1, int(saida[1] // TILE_SIZE) + 2)
+        if mapa[row][col] != 1:
+            return col, row
+    return len(mapa[0]) // 2, len(mapa) // 2
+
+
+def gatilhos_fruta(total_pontos):
+    if total_pontos >= 170:
+        return (70, 170)
+    return (max(1, total_pontos // 3), max(2, (total_pontos * 2) // 3))
+
+
+def atualizar_fruta(fruta, frutas_disparadas, pontos_comidos, total_pontos, nivel, mapa):
+    if fruta is not None:
+        fruta["frames"] -= 1
+        return fruta if fruta["frames"] > 0 else None
+
+    for gatilho in gatilhos_fruta(total_pontos):
+        if pontos_comidos >= gatilho and gatilho not in frutas_disparadas:
+            frutas_disparadas.add(gatilho)
+            col, row = posicao_fruta(mapa)
+            return {
+                "col": col,
+                "row": row,
+                "valor": FRUIT_VALUES[min(nivel - 1, len(FRUIT_VALUES) - 1)],
+                "frames": random.randint(9 * FPS, 10 * FPS),
+            }
+    return None
 
 
 def main():
@@ -30,18 +192,82 @@ def main():
 
     # Pontuação do jogador
     pontuacao = 0
+    recorde = 0
+    vidas = VIDAS_INICIAIS
+    jogo_encerrado = False
+    vida_extra_concedida = False
+    combo_fantasmas = 0
 
     # Cópia do mapa para controlar pontos coletados
     mapa_atual = [linha[:] for linha in MAPA]
+    pontos_comidos_nivel = 0
+    pontos_liberacao = 0
+    usar_liberacao_pos_morte = False
+    total_pontos_nivel = contar_pontos(mapa_atual)
+    frutas_disparadas = set()
+    fruta_ativa = None
+    frames_sem_comer = 0
+    indice_modo = 0
+    frames_modo = 0
+    modo_global = modo_por_indice(nivel_atual, indice_modo)
 
     # Criar fantasmas para o jogo
     fantasmas = criar_fantasmas(MAPA)
+    aplicar_velocidades(nivel_atual, pacman, fantasmas)
+    aplicar_modo_global(fantasmas, modo_global, inverter=False)
 
     rodando = True
     while rodando:
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
                 rodando = False
+            elif (
+                jogo_encerrado
+                and evento.type == pygame.KEYDOWN
+                and evento.key == pygame.K_r
+            ):
+                nivel_atual = 1
+                MAPA = gerar_labirinto(4, 3, nivel_atual)
+                mapa_atual = [linha[:] for linha in MAPA]
+                start_pos = encontrar_posicao_inicial(MAPA)
+                pacman.x, pacman.y = start_pos
+                fantasmas = criar_fantasmas(MAPA)
+                pontuacao = 0
+                vidas = VIDAS_INICIAIS
+                vida_extra_concedida = False
+                combo_fantasmas = 0
+                pontos_comidos_nivel = 0
+                pontos_liberacao = 0
+                usar_liberacao_pos_morte = False
+                total_pontos_nivel = contar_pontos(mapa_atual)
+                frutas_disparadas = set()
+                fruta_ativa = None
+                frames_sem_comer = 0
+                indice_modo = 0
+                frames_modo = 0
+                modo_global = modo_por_indice(nivel_atual, indice_modo)
+                aplicar_velocidades(nivel_atual, pacman, fantasmas)
+                aplicar_modo_global(fantasmas, modo_global, inverter=False)
+                jogo_encerrado = False
+
+        if jogo_encerrado:
+            desenhar_tela(screen, mapa_atual, fantasmas, pacman, fruta_ativa)
+            exibir_informacoes(screen, nivel_atual, pontuacao, vidas, recorde)
+            exibir_game_over(screen)
+            pygame.display.flip()
+            clock.tick(FPS)
+            continue
+
+        if not algum_fantasma_assustado(fantasmas):
+            frames_modo += 1
+            proximo_indice, proximo_modo = atualizar_modo_global(
+                nivel_atual, indice_modo, frames_modo, modo_global
+            )
+            if proximo_indice != indice_modo:
+                indice_modo = proximo_indice
+                frames_modo = 0
+                modo_global = proximo_modo
+                aplicar_modo_global(fantasmas, modo_global, inverter=True)
 
         teclas = pygame.key.get_pressed()
         pacman.processar_input(teclas)
@@ -54,39 +280,87 @@ def main():
         col = centro_x // TILE_SIZE
         row = centro_y // TILE_SIZE
 
+        comeu_algo = False
         if 0 <= row < len(mapa_atual) and 0 <= col < len(mapa_atual[0]):
             if mapa_atual[row][col] == 2:  # É um ponto comum
                 mapa_atual[row][col] = 0  # Remove o ponto
                 pontuacao += 10  # Incrementa pontuação
+                pontos_comidos_nivel += 1
+                pontos_liberacao += 1
+                comeu_algo = True
+                pacman.pausar(1)
             elif mapa_atual[row][col] == 4:  # É um bug crítico
                 mapa_atual[row][col] = 0  # Remove o bug crítico
                 pontuacao += 50  # Bugs críticos valem mais pontos
+                pontos_comidos_nivel += 1
+                pontos_liberacao += 1
+                comeu_algo = True
+                pacman.pausar(3)
 
                 # Quando o Pacman corrige um bug crítico, os fantasmas ficam vulneráveis
+                combo_fantasmas = 0
+                duracao_susto = duracao_frightened(nivel_atual)
                 for fantasma in fantasmas:
-                    fantasma.tornar_vulneravel(500)  # Vulnerável por 500 frames
+                    fantasma.tornar_vulneravel(duracao_susto, modo_global)
+
+        if comeu_algo:
+            frames_sem_comer = 0
+            liberar_fantasmas_por_pontos(
+                fantasmas, nivel_atual, pontos_liberacao, usar_liberacao_pos_morte
+            )
+        else:
+            frames_sem_comer = liberar_fantasma_por_ociosidade(
+                fantasmas, nivel_atual, frames_sem_comer + 1
+            )
+
+        fruta_ativa = atualizar_fruta(
+            fruta_ativa,
+            frutas_disparadas,
+            pontos_comidos_nivel,
+            total_pontos_nivel,
+            nivel_atual,
+            MAPA,
+        )
+
+        if fruta_ativa and col == fruta_ativa["col"] and row == fruta_ativa["row"]:
+            pontuacao += fruta_ativa["valor"]
+            fruta_ativa = None
+
+        if not vida_extra_concedida and pontuacao >= PONTOS_VIDA_EXTRA:
+            vidas += 1
+            vida_extra_concedida = True
+
+        recorde = max(recorde, pontuacao)
 
         # Mover fantasmas e verificar colisões
-        vidas_perdidas = False
         for fantasma in fantasmas:
             fantasma.mover(pacman.x, pacman.y, MAPA)
             resultado_colisao = fantasma.verificar_colisao_pacman(pacman.x, pacman.y)
 
             if resultado_colisao == 1:  # Colisão normal - Pacman perde vida
-                vidas_perdidas = True
-                # Resetar posição do Pacman
+                vidas -= 1
                 start_pos = encontrar_posicao_inicial(MAPA)
                 pacman.x, pacman.y = start_pos
-
-                # Manter os fantasmas onde estão, apenas devolvê-los ao estado normal
-                # Isso é mais realista e evita problemas com fantasmas presos
-                for f in fantasmas:
-                    f.voltar_ao_normal()
+                fantasmas = criar_fantasmas(MAPA, apos_morte=True)
+                aplicar_velocidades(nivel_atual, pacman, fantasmas)
+                combo_fantasmas = 0
+                pontos_liberacao = 0
+                usar_liberacao_pos_morte = True
+                fruta_ativa = None
+                frames_sem_comer = 0
+                indice_modo = 0
+                frames_modo = 0
+                modo_global = modo_por_indice(nivel_atual, indice_modo)
+                aplicar_modo_global(fantasmas, modo_global, inverter=False)
+                jogo_encerrado = vidas <= 0
                 break
 
             elif resultado_colisao == 2:  # Fantasma é comido
                 fantasma.foi_comido()
-                pontuacao += 200  # Pontuação por comer um fantasma
+                pontuacao += PONTOS_FANTASMAS_COMIDOS[
+                    min(combo_fantasmas, len(PONTOS_FANTASMAS_COMIDOS) - 1)
+                ]
+                combo_fantasmas += 1
 
         # Verificar colisões entre fantasmas
         fantasmas_colidiram = (
@@ -147,113 +421,132 @@ def main():
 
             # Criar novos fantasmas para o novo nível
             fantasmas = criar_fantasmas(MAPA)
+            aplicar_velocidades(nivel_atual, pacman, fantasmas)
+            combo_fantasmas = 0
+            pontos_comidos_nivel = 0
+            pontos_liberacao = 0
+            usar_liberacao_pos_morte = False
+            total_pontos_nivel = contar_pontos(mapa_atual)
+            frutas_disparadas = set()
+            fruta_ativa = None
+            frames_sem_comer = 0
+            indice_modo = 0
+            frames_modo = 0
+            modo_global = modo_por_indice(nivel_atual, indice_modo)
+            aplicar_modo_global(fantasmas, modo_global, inverter=False)
 
-        screen.fill((0, 0, 0))
-
-        # Desenhar o mapa com paredes e pontos estilo Pac-Man clássico
-        for row in range(len(mapa_atual)):
-            for col in range(len(mapa_atual[0])):
-                tile_x = col * TILE_SIZE
-                tile_y = row * TILE_SIZE
-
-                if mapa_atual[row][col] == 1:  # Parede
-                    # Desenhar paredes mais finas, estilo Pac-Man
-                    margem = TILE_SIZE // 6  # Margem para paredes mais finas
-
-                    # Verificar paredes adjacentes para conectar visualmente
-                    tem_parede_acima = row > 0 and mapa_atual[row - 1][col] == 1
-                    tem_parede_abaixo = (
-                        row < len(mapa_atual) - 1 and mapa_atual[row + 1][col] == 1
-                    )
-                    tem_parede_esquerda = col > 0 and mapa_atual[row][col - 1] == 1
-                    tem_parede_direita = (
-                        col < len(mapa_atual[0]) - 1 and mapa_atual[row][col + 1] == 1
-                    )
-
-                    # Cor de parede azul escuro (como no Pac-Man original)
-                    cor_parede = (0, 0, 200)
-
-                    # Desenhar o bloco central
-                    pygame.draw.rect(
-                        screen,
-                        cor_parede,
-                        (
-                            tile_x + margem,
-                            tile_y + margem,
-                            TILE_SIZE - 2 * margem,
-                            TILE_SIZE - 2 * margem,
-                        ),
-                    )
-
-                    # Conectar com paredes adjacentes
-                    if tem_parede_acima:
-                        pygame.draw.rect(
-                            screen,
-                            cor_parede,
-                            (tile_x + margem, tile_y, TILE_SIZE - 2 * margem, margem),
-                        )
-                    if tem_parede_abaixo:
-                        pygame.draw.rect(
-                            screen,
-                            cor_parede,
-                            (
-                                tile_x + margem,
-                                tile_y + TILE_SIZE - margem,
-                                TILE_SIZE - 2 * margem,
-                                margem,
-                            ),
-                        )
-                    if tem_parede_esquerda:
-                        pygame.draw.rect(
-                            screen,
-                            cor_parede,
-                            (tile_x, tile_y + margem, margem, TILE_SIZE - 2 * margem),
-                        )
-                    if tem_parede_direita:
-                        pygame.draw.rect(
-                            screen,
-                            cor_parede,
-                            (
-                                tile_x + TILE_SIZE - margem,
-                                tile_y + margem,
-                                margem,
-                                TILE_SIZE - 2 * margem,
-                            ),
-                        )
-
-                elif mapa_atual[row][col] == 2:  # Ponto comum
-                    # Pontos menores e mais brilhantes
-                    pygame.draw.circle(
-                        screen,
-                        (255, 255, 0),
-                        (tile_x + TILE_SIZE // 2, tile_y + TILE_SIZE // 2),
-                        TILE_SIZE // 10,
-                    )
-
-                elif mapa_atual[row][col] == 3:  # Casa dos fantasmas
-                    # Porta da casa dos fantasmas em vermelho escuro
-                    pygame.draw.rect(
-                        screen, (150, 0, 0), (tile_x, tile_y, TILE_SIZE, TILE_SIZE)
-                    )
-
-                elif mapa_atual[row][col] == 4:  # Bug crítico
-                    desenhar_bug_critico(screen, tile_x, tile_y)
-
-        # Desenhar fantasmas
-        for fantasma in fantasmas:
-            fantasma.desenhar(screen)
-
-        # Desenhar o Pacman por último para que fique por cima dos fantasmas quando os come
-        pacman.desenhar(screen)
+        desenhar_tela(screen, mapa_atual, fantasmas, pacman, fruta_ativa)
 
         # Exibir informações de nível e pontuação
-        exibir_informacoes(screen, nivel_atual, pontuacao)
+        exibir_informacoes(screen, nivel_atual, pontuacao, vidas, recorde)
 
         pygame.display.flip()
         clock.tick(FPS)
 
 
-def exibir_informacoes(screen, nivel, pontuacao):
+def desenhar_tela(screen, mapa_atual, fantasmas, pacman, fruta_ativa=None):
+    """Desenha mapa, fantasmas e Pac-Man."""
+    screen.fill((0, 0, 0))
+
+    # Desenhar o mapa com paredes e pontos estilo Pac-Man clássico
+    for row in range(len(mapa_atual)):
+        for col in range(len(mapa_atual[0])):
+            tile_x = col * TILE_SIZE
+            tile_y = row * TILE_SIZE
+
+            if mapa_atual[row][col] == 1:  # Parede
+                # Desenhar paredes mais finas, estilo Pac-Man
+                margem = TILE_SIZE // 6
+
+                # Verificar paredes adjacentes para conectar visualmente
+                tem_parede_acima = row > 0 and mapa_atual[row - 1][col] == 1
+                tem_parede_abaixo = (
+                    row < len(mapa_atual) - 1 and mapa_atual[row + 1][col] == 1
+                )
+                tem_parede_esquerda = col > 0 and mapa_atual[row][col - 1] == 1
+                tem_parede_direita = (
+                    col < len(mapa_atual[0]) - 1 and mapa_atual[row][col + 1] == 1
+                )
+
+                # Cor de parede azul escuro (como no Pac-Man original)
+                cor_parede = (0, 0, 200)
+
+                # Desenhar o bloco central
+                pygame.draw.rect(
+                    screen,
+                    cor_parede,
+                    (
+                        tile_x + margem,
+                        tile_y + margem,
+                        TILE_SIZE - 2 * margem,
+                        TILE_SIZE - 2 * margem,
+                    ),
+                )
+
+                # Conectar com paredes adjacentes
+                if tem_parede_acima:
+                    pygame.draw.rect(
+                        screen,
+                        cor_parede,
+                        (tile_x + margem, tile_y, TILE_SIZE - 2 * margem, margem),
+                    )
+                if tem_parede_abaixo:
+                    pygame.draw.rect(
+                        screen,
+                        cor_parede,
+                        (
+                            tile_x + margem,
+                            tile_y + TILE_SIZE - margem,
+                            TILE_SIZE - 2 * margem,
+                            margem,
+                        ),
+                    )
+                if tem_parede_esquerda:
+                    pygame.draw.rect(
+                        screen,
+                        cor_parede,
+                        (tile_x, tile_y + margem, margem, TILE_SIZE - 2 * margem),
+                    )
+                if tem_parede_direita:
+                    pygame.draw.rect(
+                        screen,
+                        cor_parede,
+                        (
+                            tile_x + TILE_SIZE - margem,
+                            tile_y + margem,
+                            margem,
+                            TILE_SIZE - 2 * margem,
+                        ),
+                    )
+
+            elif mapa_atual[row][col] == 2:  # Ponto comum
+                pygame.draw.circle(
+                    screen,
+                    (255, 255, 0),
+                    (tile_x + TILE_SIZE // 2, tile_y + TILE_SIZE // 2),
+                    TILE_SIZE // 10,
+                )
+
+            elif mapa_atual[row][col] == 3:  # Casa dos fantasmas
+                pygame.draw.rect(
+                    screen, (150, 0, 0), (tile_x, tile_y, TILE_SIZE, TILE_SIZE)
+                )
+
+            elif mapa_atual[row][col] == 4:  # Bug crítico
+                desenhar_bug_critico(screen, tile_x, tile_y)
+
+    if fruta_ativa:
+        desenhar_fruta(screen, fruta_ativa)
+
+    # Desenhar fantasmas
+    for fantasma in fantasmas:
+        fantasma.desenhar(screen)
+
+    # Desenhar o Pacman por último para que fique por cima dos fantasmas quando os come
+    pacman.desenhar(screen)
+
+
+def exibir_informacoes(screen, nivel, pontuacao, vidas, recorde):
     """Exibe informações de nível e pontuação na tela."""
     # Configurar fonte
     fonte = pygame.font.SysFont("Arial", 24, bold=True)
@@ -265,6 +558,23 @@ def exibir_informacoes(screen, nivel, pontuacao):
     # Informação de pontuação
     texto_pontuacao = fonte.render(f"Pontuação: {pontuacao}", True, (255, 255, 255))
     screen.blit(texto_pontuacao, (20, 50))
+
+    texto_vidas = fonte.render(f"Vidas: {vidas}", True, (255, 255, 255))
+    screen.blit(texto_vidas, (20, 80))
+
+    texto_recorde = fonte.render(f"Recorde: {recorde}", True, (255, 255, 255))
+    screen.blit(texto_recorde, (20, 110))
+
+
+def exibir_game_over(screen):
+    """Exibe a tela de fim de jogo."""
+    fonte_titulo = pygame.font.SysFont("Arial", 52, bold=True)
+    fonte_instrucao = pygame.font.SysFont("Arial", 24, bold=True)
+    titulo = fonte_titulo.render("GAME OVER", True, (255, 220, 80))
+    instrucao = fonte_instrucao.render("Pressione R para reiniciar", True, (255, 255, 255))
+    largura, altura = screen.get_size()
+    screen.blit(titulo, titulo.get_rect(center=(largura // 2, altura // 2 - 30)))
+    screen.blit(instrucao, instrucao.get_rect(center=(largura // 2, altura // 2 + 30)))
 
 
 def desenhar_bug_critico(screen, tile_x, tile_y):
@@ -310,6 +620,31 @@ def desenhar_bug_critico(screen, tile_x, tile_y):
             (centro_x + raio + 5, centro_y + offset_y - 3),
             2,
         )
+
+
+def desenhar_fruta(screen, fruta):
+    """Desenha a fruta bônus no centro do labirinto."""
+    centro_x = fruta["col"] * TILE_SIZE + TILE_SIZE // 2
+    centro_y = fruta["row"] * TILE_SIZE + TILE_SIZE // 2
+    valor = fruta["valor"]
+    cor = (255, 60, 90) if valor < 1000 else (255, 180, 40)
+    brilho = (255, 240, 170)
+
+    pygame.draw.circle(screen, brilho, (centro_x, centro_y), TILE_SIZE // 3, 2)
+    pygame.draw.circle(screen, cor, (centro_x - 4, centro_y + 2), TILE_SIZE // 5)
+    pygame.draw.circle(screen, cor, (centro_x + 6, centro_y + 1), TILE_SIZE // 5)
+    pygame.draw.line(
+        screen,
+        (70, 180, 80),
+        (centro_x + 2, centro_y - 7),
+        (centro_x + 9, centro_y - 14),
+        3,
+    )
+    pygame.draw.ellipse(
+        screen,
+        (80, 210, 90),
+        (centro_x + 5, centro_y - 18, 12, 8),
+    )
 
 
 def encontrar_posicao_inicial(mapa):
@@ -368,7 +703,10 @@ def encontrar_saida_fantasma(mapa):
     """Encontra a posição fora da porta da casa dos fantasmas."""
     for row in range(1, len(mapa)):
         for col in range(len(mapa[0])):
-            if mapa[row][col] == CASA_FANTASMA and mapa[row - 1][col] not in [1, CASA_FANTASMA]:
+            if (
+                mapa[row][col] == CASA_FANTASMA
+                and mapa[row - 1][col] not in [1, CASA_FANTASMA]
+            ):
                 return col * TILE_SIZE, (row - 1) * TILE_SIZE
     return None
 
@@ -395,29 +733,36 @@ def encontrar_posicao_fantasma(mapa, indice=0):
     return (largura // 2) * TILE_SIZE, (altura // 2) * TILE_SIZE
 
 
-def criar_fantasmas(mapa):
+def criar_fantasmas(mapa, apos_morte=False):
     """Cria os fantasmas para o jogo usando os sprites disponíveis."""
     fantasmas = []
 
     # Lista de todos os arquivos de sprite de fantasmas
-    sprite_paths = glob.glob("assets/ghosts/*.png")
+    sprite_paths = sorted(glob.glob("assets/ghosts/*.png"))
 
     # Lista de personalidades para os fantasmas
     personalidades = ["perseguidor", "emboscador", "vagante", "imprevisível"]
+    limites_saida = limites_saida_fantasmas(
+        nivel_atual, len(sprite_paths[:6]), apos_morte
+    )
 
-    # Criar um fantasma para cada sprite disponível (até 5)
-    for i, sprite_path in enumerate(sprite_paths[:5]):
+    # Criar um fantasma para cada sprite disponível (até 6)
+    for i, sprite_path in enumerate(sprite_paths[:6]):
         if i == 0:
             posicao_saida = encontrar_saida_fantasma(mapa)
-            pos_x, pos_y = posicao_saida if posicao_saida else encontrar_posicao_fantasma(mapa, i)
+            pos_x, pos_y = (
+                posicao_saida if posicao_saida else encontrar_posicao_fantasma(mapa, i)
+            )
             atraso_saida = 0
         else:
             pos_x, pos_y = encontrar_posicao_fantasma(mapa, i - 1)
-            atraso_saida = 60 * i
+            atraso_saida = 0 if limites_saida[i] == 0 else 999999
 
         # Criar fantasma com personalidade específica
         personalidade = personalidades[i % len(personalidades)]
-        fantasma = Ghost(pos_x, pos_y, sprite_path, TILE_SIZE, personalidade, atraso_saida)
+        fantasma = Ghost(
+            pos_x, pos_y, sprite_path, TILE_SIZE, personalidade, atraso_saida
+        )
 
         # Adicionar à lista
         fantasmas.append(fantasma)

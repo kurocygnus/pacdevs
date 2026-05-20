@@ -30,6 +30,7 @@ class Pacman:
         self.direcao = "right"
         self.anim_index = 0
         self.velocidade = 12
+        self.pausa_movimento = 0
         self.tempo_animacao = 0
         self.direcao_desejada = "right"
         self.pontos = 0
@@ -96,12 +97,21 @@ class Pacman:
 
         # Verificar colisão nos quatro cantos da hitbox
         for ponto_x, ponto_y in pontos_colisao:
-            col = ponto_x // TILE_SIZE
-            row = ponto_y // TILE_SIZE
+            col = int(ponto_x // TILE_SIZE)
+            row = int(ponto_y // TILE_SIZE)
 
             # Verificar limites do mapa
             if not (0 <= row < len(mapa) and 0 <= col < len(mapa[0])):
-                continue  # Pular para o próximo ponto se estiver fora dos limites
+                fora_horizontal = col < 0 or col >= len(mapa[0])
+                portal_horizontal = (
+                    fora_horizontal
+                    and 0 <= row < len(mapa)
+                    and mapa[row][0] != 1
+                    and mapa[row][len(mapa[0]) - 1] != 1
+                )
+                if portal_horizontal:
+                    continue
+                return False
 
             # Verificar colisões
             if mapa[row][col] == 1:  # Parede
@@ -117,6 +127,10 @@ class Pacman:
         # Use o mapa fornecido ou o mapa padrão
         if mapa is None:
             mapa = MAPA
+
+        if self.pausa_movimento > 0:
+            self.pausa_movimento -= 1
+            return
 
         # Centralizar o pacman nos corredores
         self.centralizar_nos_corredores()
@@ -149,11 +163,8 @@ class Pacman:
         elif self.x >= largura_tela:
             self._teletransportar_horizontal(mapa, "right")
 
-        # Portais verticais (cima/baixo)
-        if self.y < -TILE_SIZE:
-            self.y = altura_tela - self.velocidade
-        elif self.y >= altura_tela:
-            self.y = 0
+        # Não existem portais verticais: mantenha o Pac-Man dentro do mapa.
+        self.y = max(0, min(self.y, altura_tela - TILE_SIZE))
 
     def _teletransportar_horizontal(self, mapa, lado_saida):
         """Move para o outro lado apenas em uma linha de portal válida."""
@@ -218,6 +229,12 @@ class Pacman:
 
     def atualizar_animacao(self):
         self.anim_index = (self.anim_index + 1) % len(ANIMACAO[self.direcao])
+
+    def definir_velocidade(self, velocidade):
+        self.velocidade = velocidade
+
+    def pausar(self, frames):
+        self.pausa_movimento = max(self.pausa_movimento, frames)
 
     def desenhar(self, screen):
         frame_name = ANIMACAO[self.direcao][self.anim_index]

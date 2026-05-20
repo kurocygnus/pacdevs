@@ -9,7 +9,9 @@ class GhostSprite:
     """Gerencia os sprites dos fantasmas"""
 
     def __init__(self, image_path):
-        self.image = pygame.image.load(image_path).convert_alpha()
+        self.image = pygame.image.load(image_path)
+        if pygame.display.get_surface() is not None:
+            self.image = self.image.convert_alpha()
         # Redimensionar para o tamanho apropriado se necessário
         # Assumindo que queremos fantasmas de tamanho 30x30 pixels
         target_size = (30, 30)
@@ -53,11 +55,17 @@ class Ghost:
         self.y = y
         self.tile_size = tile_size
         self.sprite = GhostSprite(sprite_path)
-        self.velocidade = 4
+        self.velocidade_normal = 4
+        self.velocidade_assustado = 2
+        self.velocidade_comido = 8
+        self.velocidade_tunel = 2
+        self.velocidade = self.velocidade_normal
         self.estado = self.NORMAL
         self.modo = self.SAINDO_CASA if atraso_saida == 0 else self.DISPERSAR
+        self.modo_retorno = self.DISPERSAR
         self.personalidade = personalidade
         self.direcao_atual = "left" if atraso_saida == 0 else "up"
+        self.reversao_pendente = False
         self.tempo_vulneravel = 0
         self.tempo_modo_atual = 0
         self.tempo_total = 0
@@ -125,24 +133,61 @@ class Ghost:
 
         return None
 
-    def tornar_vulneravel(self, duracao=500):
+    def definir_velocidades(
+        self, normal=None, assustado=None, comido=None, tunel=None
+    ):
+        """Atualiza velocidades por fase sem trocar o estado atual."""
+        if normal is not None:
+            self.velocidade_normal = normal
+        if assustado is not None:
+            self.velocidade_assustado = assustado
+        if comido is not None:
+            self.velocidade_comido = comido
+        if tunel is not None:
+            self.velocidade_tunel = tunel
+        self._atualizar_velocidade(None)
+
+    def definir_modo_global(self, modo, inverter=False):
+        """Aplica o modo scatter/chase vindo do temporizador global."""
+        if self.estado != self.NORMAL or self.modo == self.SAINDO_CASA:
+            self.modo_retorno = modo
+            return
+        if self.modo != modo:
+            self.modo = modo
+            self.modo_retorno = modo
+            if inverter:
+                self.reversao_pendente = True
+
+    def liberar_da_casa(self):
+        """Libera um fantasma retido por contador de pontos."""
+        if self.atraso_saida > 0:
+            self.atraso_saida = 0
+            if self.estado == self.NORMAL:
+                self.modo = self.SAINDO_CASA
+                self.direcao_atual = "up"
+
+    def tornar_vulneravel(self, duracao=500, modo_retorno=None):
         """Torna o fantasma vulnerável por um período, exceto se estiver COMIDO."""
         if self.estado != self.COMIDO:
+            if duracao <= 0:
+                self.reversao_pendente = True
+                return
+            if modo_retorno is not None:
+                self.modo_retorno = modo_retorno
+            elif self.modo not in (self.ASSUSTADO, self.SAINDO_CASA):
+                self.modo_retorno = self.modo
             self.estado = self.VULNERAVEL
             self.modo = self.ASSUSTADO
             self.tempo_vulneravel = duracao
-            self.velocidade = 2
-            if self._esta_centralizado():
-                self.direcao_atual = self._direcao_oposta().get(
-                    self.direcao_atual, self.direcao_atual
-                )
+            self.reversao_pendente = True
+            self._atualizar_velocidade(None)
 
     def foi_comido(self):
         """Marca o fantasma como comido e o envia de volta para a casa"""
         self.estado = self.COMIDO
         self.modo = self.PERSEGUIR
         self.comido = True
-        self.velocidade = 8
+        self.velocidade = self.velocidade_comido
         # Quando um fantasma é comido, ele não pode ser comido novamente até voltar ao normal
         self.tempo_vulneravel = 0
 
@@ -153,8 +198,8 @@ class Ghost:
     def voltar_ao_normal(self):
         """Retorna o fantasma ao estado normal"""
         self.estado = self.NORMAL
-        self.modo = self.PERSEGUIR
-        self.velocidade = 4
+        self.modo = self.modo_retorno
+        self.velocidade = self.velocidade_normal
 
         # Direções preferidas quando sai da casa (priorizar UP)
         if self._esta_na_casa(
@@ -212,7 +257,7 @@ class Ghost:
 
     def decidir_direcao(self, pacman_x, pacman_y, mapa):
         """Escolhe a próxima direção apenas a partir do centro de um tile."""
-        target_x, target_y = self._calcular_alvo(pacman_x, pacman_y)
+        target_x, target_y = self._calcular_alvo(pacman_x, pacman_y, mapa)
         direcoes_validas = self._direcoes_validas(mapa)
         if not direcoes_validas:
             return self.direcao_atual
@@ -265,10 +310,12 @@ class Ghost:
             ),
         )
 
-    def _calcular_alvo(self, pacman_x, pacman_y):
+    def _calcular_alvo(self, pacman_x, pacman_y, mapa):
         """Calcula a posição alvo do fantasma com base no seu estado e personalidade"""
         pacman_col = int(pacman_x // self.tile_size)
         pacman_row = int(pacman_y // self.tile_size)
+        mapa_altura = len(mapa)
+        mapa_largura = len(mapa[0])
 
         # Calcular a direção atual do Pacman com base nas coordenadas
         try:
@@ -276,7 +323,7 @@ class Ghost:
             from pacman import direcao_pacman_global
 
             direcao_pacman = direcao_pacman_global
-        except:
+        except ImportError:
             # Se não conseguir, estimar com base na posição atual e anterior
             # Usando um valor padrão como fallback
             direcao_pacman = "right"  # valor padrão
@@ -291,10 +338,6 @@ class Ghost:
 
         # Se estiver no modo dispersar
         if self.modo == self.DISPERSAR:
-            # Usar valores fixos de dispersão baseados em uma estimativa do tamanho do mapa
-            mapa_altura = 15  # Estimativa baseada em SCREEN_HEIGHT / TILE_SIZE
-            mapa_largura = 20  # Estimativa baseada em SCREEN_WIDTH / TILE_SIZE
-
             if self.personalidade == "perseguidor":
                 return (1, 1)  # Canto superior esquerdo
             elif self.personalidade == "emboscador":
@@ -324,11 +367,11 @@ class Ghost:
 
             # Limitar as coordenadas para não ultrapassar os limites do mapa
             target_x = max(
-                0, min(pacman_col + offset_x, 30)
-            )  # Assumindo largura máxima de 30
+                0, min(pacman_col + offset_x, mapa_largura - 1)
+            )
             target_y = max(
-                0, min(pacman_row + offset_y, 30)
-            )  # Assumindo altura máxima de 30
+                0, min(pacman_row + offset_y, mapa_altura - 1)
+            )
             return (target_x, target_y)
 
         elif self.personalidade == "vagante":
@@ -350,8 +393,8 @@ class Ghost:
             alvo_x = frente_x + (frente_x - ghost_col)
             alvo_y = frente_y + (frente_y - ghost_row)
             return (
-                max(0, min(alvo_x, 30)),
-                max(0, min(alvo_y, 30)),
+                max(0, min(alvo_x, mapa_largura - 1)),
+                max(0, min(alvo_y, mapa_altura - 1)),
             )
 
         else:  # "imprevisível" (Clyde)
@@ -361,7 +404,7 @@ class Ghost:
             )
             if distancia >= 8:
                 return (pacman_col, pacman_row)
-            return (1, 30)
+            return (1, mapa_altura - 1)
 
     def _alinhar_top_left_ao_tile(self, x, y):
         """Converte qualquer ponto dentro do tile para o top-left daquele tile."""
@@ -417,7 +460,13 @@ class Ghost:
 
     def _tile_permitido(self, col, row, mapa):
         if row < 0 or row >= len(mapa) or col < 0 or col >= len(mapa[0]):
-            return True
+            fora_horizontal = col < 0 or col >= len(mapa[0])
+            return (
+                fora_horizontal
+                and 0 <= row < len(mapa)
+                and mapa[row][0] != PAREDE
+                and mapa[row][len(mapa[0]) - 1] != PAREDE
+            )
         if mapa[row][col] == PAREDE:
             return False
         if mapa[row][col] == CASA_FANTASMA:
@@ -434,6 +483,8 @@ class Ghost:
         col, row = self._tile_atual()
         direcoes = []
         for direcao in ["up", "down", "left", "right"]:
+            if self._subida_bloqueada(direcao, col, row, mapa):
+                continue
             dx, dy = self._delta_direcao(direcao)
             if self._tile_permitido(col + dx, row + dy, mapa):
                 direcoes.append(direcao)
@@ -441,8 +492,20 @@ class Ghost:
 
     def _pode_ir_direcao(self, direcao, mapa):
         col, row = self._tile_atual()
+        if self._subida_bloqueada(direcao, col, row, mapa):
+            return False
         dx, dy = self._delta_direcao(direcao)
         return self._tile_permitido(col + dx, row + dy, mapa)
+
+    def _subida_bloqueada(self, direcao, col, row, mapa):
+        """Replica as zonas onde fantasmas normais não viram para cima."""
+        if direcao != "up" or self.estado != self.NORMAL:
+            return False
+        largura = len(mapa[0])
+        zona_y = {max(0, len(mapa) // 2 - 2), max(0, len(mapa) // 2 - 1)}
+        zona_esquerda = 1 <= col <= min(5, largura // 3)
+        zona_direita = max(largura - 6, largura * 2 // 3) <= col <= largura - 2
+        return row in zona_y and (zona_esquerda or zona_direita)
 
     def _distancia_do_proximo_tile(self, direcao, target_x, target_y):
         col, row = self._tile_atual()
@@ -611,17 +674,30 @@ class Ghost:
 
     def _aplicar_portais(self, mapa):
         largura_tela = len(mapa[0]) * self.tile_size
-        altura_tela = len(mapa) * self.tile_size
 
         if self.x < -self.tile_size:
             self.x = largura_tela - self.tile_size
         elif self.x >= largura_tela:
             self.x = 0
 
-        if self.y < -self.tile_size:
-            self.y = altura_tela - self.tile_size
-        elif self.y >= altura_tela:
-            self.y = 0
+    def _esta_no_tunel_lateral(self, mapa):
+        col, row = self._tile_atual()
+        if not (0 <= row < len(mapa)):
+            return False
+        largura = len(mapa[0])
+        return mapa[row][0] != PAREDE and mapa[row][largura - 1] != PAREDE and (
+            col <= 2 or col >= largura - 3
+        )
+
+    def _atualizar_velocidade(self, mapa):
+        if self.estado == self.COMIDO:
+            self.velocidade = self.velocidade_comido
+        elif self.estado == self.VULNERAVEL:
+            self.velocidade = self.velocidade_assustado
+        elif mapa is not None and self._esta_no_tunel_lateral(mapa):
+            self.velocidade = self.velocidade_tunel
+        else:
+            self.velocidade = self.velocidade_normal
 
     def _calcular_nova_posicao(self, direcao):
         """Calcula a nova posição baseada na direção"""
@@ -645,11 +721,13 @@ class Ghost:
     def mover(self, pacman_x, pacman_y, mapa):
         """Move o fantasma pela grade, evitando curvas fora do centro dos tiles."""
         self.tempo_total += 1
+        self._atualizar_velocidade(mapa)
 
         if self.estado == self.VULNERAVEL:
             self.tempo_vulneravel -= 1
             if self.tempo_vulneravel <= 0:
                 self.voltar_ao_normal()
+                self._atualizar_velocidade(mapa)
 
         if (
             self.estado == self.NORMAL
@@ -669,10 +747,18 @@ class Ghost:
 
         self._snap_para_centro_do_tile()
 
+        if self.reversao_pendente:
+            oposta = self._direcao_oposta().get(self.direcao_atual)
+            if oposta and self._pode_ir_direcao(oposta, mapa):
+                self.direcao_atual = oposta
+            self.reversao_pendente = False
+
         if self.estado != self.COMIDO and self._esta_na_casa(mapa):
             self.modo = self.SAINDO_CASA
         elif self.modo == self.SAINDO_CASA:
-            self.modo = self.ASSUSTADO if self.estado == self.VULNERAVEL else self.PERSEGUIR
+            self.modo = (
+                self.ASSUSTADO if self.estado == self.VULNERAVEL else self.modo_retorno
+            )
 
         if self.estado == self.COMIDO and self._esta_na_casa(mapa):
             inicio_col = int(self.posicao_inicio[0] // self.tile_size)
@@ -852,49 +938,6 @@ class Ghost:
 
             pygame.draw.polygon(screen, seta_cor, pontos)
 
-    def _centralizar_na_grade(self):
-        """Centraliza o fantasma na grade para melhor navegação nos corredores"""
-        # Obter posição atual em termos de células do grid
-        grid_x = int(self.x // self.tile_size)
-        grid_y = int(self.y // self.tile_size)
-
-        # Calcular centro da célula atual
-        centro_celula_x = grid_x * self.tile_size + self.tile_size // 2
-        centro_celula_y = grid_y * self.tile_size + self.tile_size // 2
-
-        # Centralizar fantasma na célula atual quando estiver movendo-se
-        centro_fantasma_x = self.x + self.tile_size // 2
-        centro_fantasma_y = self.y + self.tile_size // 2
-
-        # Tolerância maior para centralização (evita que fantasmas fiquem presos)
-        tolerancia = self.velocidade * 1.5
-
-        # Centralizar somente se estiver significativamente desalinhado
-        # Isso permite movimento mais fluido sem ficar preso em corredores
-        if self.direcao_atual in ["left", "right"]:
-            # Se movendo horizontalmente, centralizar verticalmente
-            if abs(centro_fantasma_y - centro_celula_y) > tolerancia:
-                if centro_fantasma_y > centro_celula_y:
-                    self.y -= min(
-                        self.velocidade / 3, centro_fantasma_y - centro_celula_y
-                    )
-                else:
-                    self.y += min(
-                        self.velocidade / 3, centro_celula_y - centro_fantasma_y
-                    )
-
-        elif self.direcao_atual in ["up", "down"]:
-            # Se movendo verticalmente, centralizar horizontalmente
-            if abs(centro_fantasma_x - centro_celula_x) > tolerancia:
-                if centro_fantasma_x > centro_celula_x:
-                    self.x -= min(
-                        self.velocidade / 3, centro_fantasma_x - centro_celula_x
-                    )
-                else:
-                    self.x += min(
-                        self.velocidade / 3, centro_celula_x - centro_fantasma_x
-                    )
-
     def _esta_em_intersecao(self, mapa):
         """Verifica se o fantasma está em uma interseção (mais de uma direção possível)"""
         if not self._esta_centralizado(3):
@@ -920,34 +963,3 @@ class Ghost:
             return not eh_corredor  # É interseção se NÃO for um corredor reto
 
         return False  # Sem saídas ou beco sem saída
-
-    def _ajustar_posicao_no_corredor(self, mapa):
-        """Faz pequenos ajustes na posição para evitar ficar preso em cantos ou paredes"""
-        # Obter posição atual na grade
-        ghost_col = int((self.x + self.tile_size // 2) // self.tile_size)
-        ghost_row = int((self.y + self.tile_size // 2) // self.tile_size)
-
-        # Centro da célula atual
-        centro_x = ghost_col * self.tile_size + self.tile_size // 2
-        centro_y = ghost_row * self.tile_size + self.tile_size // 2
-
-        # Centralização suave quando estiver movendo em corredores
-        if self.direcao_atual in ["left", "right"]:
-            # Se movendo horizontalmente, centralizar verticalmente
-            diferenca_y = (self.y + self.tile_size // 2) - centro_y
-            if abs(diferenca_y) > 2:  # Apenas se estiver desalinhado
-                ajuste = min(self.velocidade // 2, abs(diferenca_y))
-                if diferenca_y > 0:
-                    self.y -= ajuste
-                else:
-                    self.y += ajuste
-
-        elif self.direcao_atual in ["up", "down"]:
-            # Se movendo verticalmente, centralizar horizontalmente
-            diferenca_x = (self.x + self.tile_size // 2) - centro_x
-            if abs(diferenca_x) > 2:  # Apenas se estiver desalinhado
-                ajuste = min(self.velocidade // 2, abs(diferenca_x))
-                if diferenca_x > 0:
-                    self.x -= ajuste
-                else:
-                    self.x += ajuste
