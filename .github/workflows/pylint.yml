@@ -4,7 +4,7 @@ on: [push]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 3.8 e 3.9 não têm build no ubuntu-latest (26.04)
     strategy:
       fail-fast: false
       matrix:
