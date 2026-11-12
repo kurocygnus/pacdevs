@@ -7,6 +7,7 @@ import pacman_sprite
 from ghost import Ghost
 from maze_generator import gerar_labirinto, CASA_FANTASMA, PAREDE
 from pacman import Pacman
+from recursos import caminho_recurso
 from visual import (
     LARGURA_PAINEL,
     atualizar_popups,
@@ -217,7 +218,7 @@ def main():
     )
     pygame.display.set_caption("PacDevs")
     clock = pygame.time.Clock()
-    pacman_sprites = pacman_sprite.PacmanSprite("assets/pacman")
+    pacman_sprites = pacman_sprite.PacmanSprite(caminho_recurso("assets", "pacman"))
 
     # Posicionar o Pacman em um corredor válido
     start_pos = encontrar_posicao_inicial(MAPA)
@@ -555,7 +556,7 @@ def criar_fantasmas(mapa, apos_morte=False):
     fantasmas = []
 
     # Lista de todos os arquivos de sprite de fantasmas
-    sprite_paths = sorted(glob.glob("assets/ghosts/*.png"))
+    sprite_paths = sorted(glob.glob(caminho_recurso("assets", "ghosts", "*.png")))
 
     # Lista de personalidades para os fantasmas
     personalidades = ["perseguidor", "emboscador", "vagante", "imprevisível"]

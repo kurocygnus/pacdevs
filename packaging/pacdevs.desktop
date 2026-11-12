@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PacDevs
+Comment=Clone de Pac-Man com os colegas como fantasmas
+Exec=pacdevs
+Icon=pacdevs
+Categories=Game;ArcadeGame;
+Terminal=false

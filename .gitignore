@@ -2,3 +2,9 @@
 .tmp/
 __pycache__/
 *.py[cod]
+
+.venv-build/
+build/
+dist/
+*.spec
+*.AppImage
