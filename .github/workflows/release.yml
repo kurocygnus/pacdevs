@@ -1,0 +1,50 @@
+name: Release
+
+# - Tag "v*" (ex.: v0.1.0): gera o AppImage e publica uma release com ele anexado.
+# - Pull request / execução manual: só gera o AppImage (valida o build, sem publicar).
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    # Runner mais antigo = glibc mais antiga = AppImage compatível com mais distros
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+    - name: Gerar o AppImage
+      run: make appimage PYTHON=python
+    - uses: actions/upload-artifact@v4
+      with:
+        name: PacDevs-AppImage
+        path: dist/*.AppImage
+        if-no-files-found: error
+
+  publicar:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: appimage
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: PacDevs-AppImage
+        path: dist
+    - name: Publicar a release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create "$GITHUB_REF_NAME" dist/*.AppImage \
+          --repo "$GITHUB_REPOSITORY" \
+          --title "PacDevs $GITHUB_REF_NAME" \
+          --generate-notes \
+          --notes "Para jogar: baixe o AppImage, dê permissão de execução (\`chmod +x PacDevs-x86_64.AppImage\`) e execute. Linux x86_64."
