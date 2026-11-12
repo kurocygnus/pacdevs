@@ -32,54 +32,67 @@ MAX_SEGMENTOS_POR_FRAME = 4
 
 
 class GhostSprite:
-    """Avatar circular do fantasma, recortado sem distorcer o rosto."""
+    """Rosto completo do fantasma, com contorno colorido na silhueta.
 
-    ESPESSURA_ANEL = 3
+    O recorte original é mantido inteiro (sem máscara circular): só a margem
+    transparente é aparada e a imagem é reduzida preservando a proporção.
+    """
 
-    def __init__(self, image_path, tamanho=34):
+    LIMIAR_ALPHA = 10
+    ESPESSURA_CONTORNO = 2
+
+    def __init__(self, image_path, tamanho=46):
         self.tamanho = tamanho
         original = pygame.image.load(image_path)
         if pygame.display.get_surface() is not None:
             original = original.convert_alpha()
-        self.rosto = self._recortar_rosto(original, tamanho - 2 * self.ESPESSURA_ANEL)
+        else:
+            original = original.convert_alpha() if original.get_bitsize() == 32 else original
+        self.rosto = self._preparar_rosto(original, tamanho - 2 * self.ESPESSURA_CONTORNO)
+        self.silhueta = pygame.mask.from_surface(self.rosto, self.LIMIAR_ALPHA)
         self._cache = {}
 
-    @staticmethod
-    def _recortar_rosto(imagem, lado):
-        """Recorta um quadrado a partir do topo (onde fica o rosto) e redimensiona."""
-        largura, altura = imagem.get_size()
-        quadrado = min(largura, altura)
-        esquerda = (largura - quadrado) // 2
-        topo = int((altura - quadrado) * 0.15)
-        recorte = imagem.subsurface((esquerda, topo, quadrado, quadrado))
-        try:
-            return pygame.transform.smoothscale(recorte, (lado, lado))
-        except ValueError:  # formatos sem suporte a smoothscale
-            return pygame.transform.scale(recorte, (lado, lado))
+    def _preparar_rosto(self, imagem, lado_maximo):
+        """Apara a margem transparente e reduz para caber em `lado_maximo`."""
+        mascara = pygame.mask.from_surface(imagem, self.LIMIAR_ALPHA)
+        principal = mascara.connected_component()  # ignora pixels soltos
+        retangulos = principal.get_bounding_rects()
+        if retangulos:
+            area = retangulos[0].unionall(retangulos[1:])
+            limpa = imagem.copy()
+            filtro = principal.to_surface(setcolor=(255, 255, 255, 255), unsetcolor=(0, 0, 0, 0))
+            limpa.blit(filtro, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            imagem = limpa.subsurface(area).copy()
 
-    def avatar(self, cor_anel, tinta=None):
-        """Rosto em círculo com anel colorido; `tinta` é um RGBA opcional por cima."""
-        chave = (cor_anel, tinta)
+        largura, altura = imagem.get_size()
+        escala = min(lado_maximo / largura, lado_maximo / altura)
+        novo_tamanho = (max(1, round(largura * escala)), max(1, round(altura * escala)))
+        try:
+            return pygame.transform.smoothscale(imagem, novo_tamanho)
+        except ValueError:  # formatos sem suporte a smoothscale
+            return pygame.transform.scale(imagem, novo_tamanho)
+
+    def avatar(self, cor_contorno, tinta=None):
+        """Rosto inteiro com contorno de cor; `tinta` é um RGBA aplicado só no rosto."""
+        chave = (cor_contorno, tinta)
         if chave not in self._cache:
-            tamanho = self.tamanho
-            borda = self.ESPESSURA_ANEL
-            interno = tamanho - 2 * borda
-            superficie = pygame.Surface((tamanho, tamanho), pygame.SRCALPHA)
-            pygame.draw.circle(superficie, (18, 18, 30), (tamanho // 2, tamanho // 2), tamanho // 2)
+            borda = self.ESPESSURA_CONTORNO
+            largura, altura = self.rosto.get_size()
+            superficie = pygame.Surface((largura + 2 * borda, altura + 2 * borda), pygame.SRCALPHA)
+
+            contorno = self.silhueta.to_surface(
+                setcolor=(*cor_contorno, 255), unsetcolor=(0, 0, 0, 0)
+            )
+            for dx in range(-borda, borda + 1):
+                for dy in range(-borda, borda + 1):
+                    if dx * dx + dy * dy <= borda * borda + 1:
+                        superficie.blit(contorno, (borda + dx, borda + dy))
 
             rosto = self.rosto.copy()
             if tinta is not None:
-                camada = pygame.Surface((interno, interno), pygame.SRCALPHA)
-                camada.fill(tinta)
+                camada = self.silhueta.to_surface(setcolor=tinta, unsetcolor=(0, 0, 0, 0))
                 rosto.blit(camada, (0, 0))
-            mascara = pygame.Surface((interno, interno), pygame.SRCALPHA)
-            pygame.draw.circle(mascara, (255, 255, 255, 255), (interno // 2, interno // 2), interno // 2)
-            rosto.blit(mascara, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
             superficie.blit(rosto, (borda, borda))
-
-            pygame.draw.circle(
-                superficie, cor_anel, (tamanho // 2, tamanho // 2), tamanho // 2, borda
-            )
             self._cache[chave] = superficie
         return self._cache[chave]
 
