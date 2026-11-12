@@ -1,16 +1,20 @@
-import pygame
+import functools
 import glob
 import random
-from pacman import Pacman
+
+import pygame
+
 import pacman_sprite
 from ghost import Ghost
-from maze_generator import gerar_labirinto, CASA_FANTASMA
+from maze_generator import gerar_labirinto, CASA_FANTASMA, PAREDE
+from pacman import Pacman
 
 TILE_SIZE = 34
 SCREEN_WIDTH, SCREEN_HEIGHT = TILE_SIZE * 20, TILE_SIZE * 15
 FPS = 60  # Controla a velocidade da animação
 VELOCIDADE_BASE_FPS = 10
 VIDAS_INICIAIS = 3
+LARGURA_PAINEL = 200  # faixa à direita do labirinto onde fica o HUD
 PONTOS_FANTASMAS_COMIDOS = (200, 400, 800, 1600)
 PONTOS_VIDA_EXTRA = 10000
 FRUIT_VALUES = (100, 300, 500, 700, 1000, 2000, 3000, 5000)
@@ -145,13 +149,34 @@ def liberar_fantasma_por_ociosidade(fantasmas, nivel, frames_sem_comer):
 
 
 def posicao_fruta(mapa):
-    saida = encontrar_saida_fantasma(mapa)
-    if saida:
-        col = int(saida[0] // TILE_SIZE)
-        row = min(len(mapa) - 1, int(saida[1] // TILE_SIZE) + 2)
-        if mapa[row][col] != 1:
-            return col, row
-    return len(mapa[0]) // 2, len(mapa) // 2
+    """Tile livre logo abaixo da casa dos fantasmas (onde a fruta nasce no arcade).
+
+    A fruta precisa ficar num lugar que o Pac-Man consiga alcançar, ou seja,
+    fora da casa e fora das paredes.
+    """
+    casas = [
+        (col, row)
+        for row, linha in enumerate(mapa)
+        for col, celula in enumerate(linha)
+        if celula == CASA_FANTASMA
+    ]
+    if casas:
+        col = round(sum(c for c, _ in casas) / len(casas))
+        row = max(r for _, r in casas) + 1
+        referencia = (col, row)
+    else:
+        referencia = (len(mapa[0]) // 2, len(mapa) // 2)
+
+    melhor = None
+    melhor_distancia = None
+    for row, linha in enumerate(mapa):
+        for col, celula in enumerate(linha):
+            if celula in (PAREDE, CASA_FANTASMA):
+                continue
+            distancia = (col - referencia[0]) ** 2 + (row - referencia[1]) ** 2
+            if melhor_distancia is None or distancia < melhor_distancia:
+                melhor, melhor_distancia = (col, row), distancia
+    return melhor
 
 
 def gatilhos_fruta(total_pontos):
@@ -181,7 +206,9 @@ def atualizar_fruta(fruta, frutas_disparadas, pontos_comidos, total_pontos, nive
 def main():
     global nivel_atual, MAPA
     pygame.init()
-    screen = pygame.display.set_mode((768, 768))
+    screen = pygame.display.set_mode(
+        (len(MAPA[0]) * TILE_SIZE + LARGURA_PAINEL, len(MAPA) * TILE_SIZE)
+    )
     pygame.display.set_caption("PacDevs")
     clock = pygame.time.Clock()
     pacman_sprites = pacman_sprite.PacmanSprite("assets/pacman")
@@ -189,6 +216,7 @@ def main():
     # Posicionar o Pacman em um corredor válido
     start_pos = encontrar_posicao_inicial(MAPA)
     pacman = Pacman(x=start_pos[0], y=start_pos[1], sprites=pacman_sprites)
+    pacman.reposicionar(*start_pos)
 
     # Pontuação do jogador
     pontuacao = 0
@@ -230,7 +258,7 @@ def main():
                 MAPA = gerar_labirinto(4, 3, nivel_atual)
                 mapa_atual = [linha[:] for linha in MAPA]
                 start_pos = encontrar_posicao_inicial(MAPA)
-                pacman.x, pacman.y = start_pos
+                pacman.reposicionar(*start_pos)
                 fantasmas = criar_fantasmas(MAPA)
                 pontuacao = 0
                 vidas = VIDAS_INICIAIS
@@ -275,10 +303,10 @@ def main():
         pacman.atualizar_animacao()
 
         # Verificar coleta de pontos - usando o centro do Pac-Man
-        centro_x = pacman.x + TILE_SIZE // 2
-        centro_y = pacman.y + TILE_SIZE // 2
-        col = centro_x // TILE_SIZE
-        row = centro_y // TILE_SIZE
+        centro_x = pacman.x + TILE_SIZE / 2
+        centro_y = pacman.y + TILE_SIZE / 2
+        col = int(centro_x // TILE_SIZE)
+        row = int(centro_y // TILE_SIZE)
 
         comeu_algo = False
         if 0 <= row < len(mapa_atual) and 0 <= col < len(mapa_atual[0]):
@@ -334,13 +362,13 @@ def main():
 
         # Mover fantasmas e verificar colisões
         for fantasma in fantasmas:
-            fantasma.mover(pacman.x, pacman.y, MAPA)
+            fantasma.mover(pacman.x, pacman.y, MAPA, pacman.direcao)
             resultado_colisao = fantasma.verificar_colisao_pacman(pacman.x, pacman.y)
 
             if resultado_colisao == 1:  # Colisão normal - Pacman perde vida
                 vidas -= 1
                 start_pos = encontrar_posicao_inicial(MAPA)
-                pacman.x, pacman.y = start_pos
+                pacman.reposicionar(*start_pos)
                 fantasmas = criar_fantasmas(MAPA, apos_morte=True)
                 aplicar_velocidades(nivel_atual, pacman, fantasmas)
                 combo_fantasmas = 0
@@ -362,46 +390,6 @@ def main():
                 ]
                 combo_fantasmas += 1
 
-        # Verificar colisões entre fantasmas
-        fantasmas_colidiram = (
-            set()
-        )  # Conjunto para rastrear quais fantasmas já colidiram
-
-        # Otimização: só verificar colisões se tivermos mais de um fantasma
-        if len(fantasmas) > 1:
-            for i, fantasma1 in enumerate(fantasmas):
-                for j, fantasma2 in enumerate(
-                    fantasmas[i + 1 :], i + 1
-                ):  # Evitar verificar o mesmo par duas vezes
-                    # Ignorar se algum deles já colidiu neste frame ou está em estado COMIDO
-                    if (
-                        i in fantasmas_colidiram
-                        or j in fantasmas_colidiram
-                        or fantasma1.estado == Ghost.COMIDO
-                        or fantasma2.estado == Ghost.COMIDO
-                    ):
-                        continue
-
-                    # Otimização: pré-verificação de distância para evitar cálculos desnecessários
-                    # Se os fantasmas estão longe um do outro, não precisamos verificar colisão
-                    dist_aprox = abs(fantasma1.x - fantasma2.x) + abs(
-                        fantasma1.y - fantasma2.y
-                    )
-                    if (
-                        dist_aprox > TILE_SIZE * 1.5
-                    ):  # Distância de Manhattan como filtro rápido
-                        continue
-
-                    # Verificar colisão precisa
-                    if fantasma1.verificar_colisao_com_fantasma(fantasma2, MAPA):
-                        # Ambos os fantasmas mudam de direção
-                        fantasma1.reagir_a_colisao(MAPA)
-                        fantasma2.reagir_a_colisao(MAPA)
-
-                        # Adicionar ao conjunto de fantasmas que já colidiram
-                        fantasmas_colidiram.add(i)
-                        fantasmas_colidiram.add(j)
-
         # Verificar se todos os pontos foram coletados
         pontos_restantes = 0
         for linha in mapa_atual:
@@ -417,7 +405,7 @@ def main():
 
             # Posicionar o Pacman em um novo ponto inicial
             start_pos = encontrar_posicao_inicial(MAPA)
-            pacman.x, pacman.y = start_pos
+            pacman.reposicionar(*start_pos)
 
             # Criar novos fantasmas para o novo nível
             fantasmas = criar_fantasmas(MAPA)
@@ -546,33 +534,33 @@ def desenhar_tela(screen, mapa_atual, fantasmas, pacman, fruta_ativa=None):
     pacman.desenhar(screen)
 
 
+@functools.lru_cache(maxsize=None)
+def _fonte(tamanho):
+    """SysFont é caro: cria cada tamanho uma única vez em vez de todo frame."""
+    return pygame.font.SysFont("Arial", tamanho, bold=True)
+
+
 def exibir_informacoes(screen, nivel, pontuacao, vidas, recorde):
-    """Exibe informações de nível e pontuação na tela."""
-    # Configurar fonte
-    fonte = pygame.font.SysFont("Arial", 24, bold=True)
-
-    # Informação de nível
-    texto_nivel = fonte.render(f"Nível: {nivel}", True, (255, 255, 255))
-    screen.blit(texto_nivel, (20, 20))
-
-    # Informação de pontuação
-    texto_pontuacao = fonte.render(f"Pontuação: {pontuacao}", True, (255, 255, 255))
-    screen.blit(texto_pontuacao, (20, 50))
-
-    texto_vidas = fonte.render(f"Vidas: {vidas}", True, (255, 255, 255))
-    screen.blit(texto_vidas, (20, 80))
-
-    texto_recorde = fonte.render(f"Recorde: {recorde}", True, (255, 255, 255))
-    screen.blit(texto_recorde, (20, 110))
+    """Exibe nível, pontuação, vidas e recorde no painel à direita do labirinto."""
+    x = screen.get_width() - LARGURA_PAINEL + 20
+    y = 24
+    for rotulo, valor in (
+        ("Nível", nivel),
+        ("Pontuação", pontuacao),
+        ("Vidas", vidas),
+        ("Recorde", recorde),
+    ):
+        screen.blit(_fonte(18).render(rotulo, True, (170, 170, 170)), (x, y))
+        screen.blit(_fonte(30).render(str(valor), True, (255, 255, 255)), (x, y + 22))
+        y += 72
 
 
 def exibir_game_over(screen):
-    """Exibe a tela de fim de jogo."""
-    fonte_titulo = pygame.font.SysFont("Arial", 52, bold=True)
-    fonte_instrucao = pygame.font.SysFont("Arial", 24, bold=True)
-    titulo = fonte_titulo.render("GAME OVER", True, (255, 220, 80))
-    instrucao = fonte_instrucao.render("Pressione R para reiniciar", True, (255, 255, 255))
-    largura, altura = screen.get_size()
+    """Exibe a tela de fim de jogo centralizada sobre o labirinto."""
+    titulo = _fonte(52).render("GAME OVER", True, (255, 220, 80))
+    instrucao = _fonte(24).render("Pressione R para reiniciar", True, (255, 255, 255))
+    largura = screen.get_width() - LARGURA_PAINEL
+    altura = screen.get_height()
     screen.blit(titulo, titulo.get_rect(center=(largura // 2, altura // 2 - 30)))
     screen.blit(instrucao, instrucao.get_rect(center=(largura // 2, altura // 2 + 30)))
 

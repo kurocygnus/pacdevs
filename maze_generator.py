@@ -236,6 +236,20 @@ def criar_casa_fantasmas(mapa, largura, altura, gerador=None):
         mapa[inicio_y - 1][centro_x] = CORREDOR
 
 
+def _corredor_mais_proximo(mapa, y, x):
+    """Célula de corredor mais próxima de (y, x); desempate determinístico."""
+    melhor = (y, x)
+    melhor_chave = None
+    for cy, linha in enumerate(mapa):
+        for cx, celula in enumerate(linha):
+            if celula != CORREDOR:
+                continue
+            chave = ((cy - y) ** 2 + (cx - x) ** 2, cy, cx)
+            if melhor_chave is None or chave < melhor_chave:
+                melhor, melhor_chave = (cy, cx), chave
+    return melhor
+
+
 def adicionar_power_pellets_cantos(mapa, mapa_pontos, nivel=1, gerador=None):
     """
     Adiciona bugs críticos no mapa, com variação baseada no nível.
@@ -255,35 +269,20 @@ def adicionar_power_pellets_cantos(mapa, mapa_pontos, nivel=1, gerador=None):
     num_extras = min(4, nivel // 3)
     num_power_pellets += num_extras
 
-    # Posições tradicionais dos itens especiais (próximas aos cantos)
-    posicoes_cantos = [
-        (2, 2),  # Superior esquerdo
-        (2, largura - 3),  # Superior direito
-        (altura - 3, 2),  # Inferior esquerdo
-        (altura - 3, largura - 3),  # Inferior direito
+    # Posições tradicionais dos itens especiais (próximas aos cantos). Só o lado
+    # esquerdo é procurado; o direito é o espelho, para o mapa ficar simétrico.
+    nominais_esquerda = [
+        (3, 1),  # Superior (mesma linha do mapa original)
+        (altura - 6, 1),  # Inferior (mesma linha do mapa original)
     ]
 
-    # Adicionar bugs críticos nos cantos (sempre presente)
-    for y, x in posicoes_cantos:
-        # Encontrar o ponto de corredor mais próximo se a posição exata não for válida
-        if mapa[y][x] != CORREDOR:
-            # Procurar nas proximidades
-            encontrou = False
-            for dy in range(-2, 3):
-                for dx in range(-2, 3):
-                    ny, nx = y + dy, x + dx
-                    if (
-                        0 <= ny < altura
-                        and 0 <= nx < largura
-                        and mapa[ny][nx] == CORREDOR
-                    ):
-                        mapa_pontos[ny][nx] = POWER_PELLET
-                        encontrou = True
-                        break
-                if encontrou:
-                    break
-        else:
-            mapa_pontos[y][x] = POWER_PELLET
+    posicoes_cantos = []
+    for y, x in nominais_esquerda:
+        y, x = _corredor_mais_proximo(mapa, y, x)
+        for destino_x in (x, largura - 1 - x):
+            if mapa[y][destino_x] == CORREDOR:
+                posicoes_cantos.append((y, destino_x))
+                mapa_pontos[y][destino_x] = POWER_PELLET
 
     # Adicionar bugs críticos extras em posições estratégicas (para níveis avançados)
     if num_extras > 0:
