@@ -1,4 +1,3 @@
-import functools
 import glob
 import random
 
@@ -8,13 +7,20 @@ import pacman_sprite
 from ghost import Ghost
 from maze_generator import gerar_labirinto, CASA_FANTASMA, PAREDE
 from pacman import Pacman
+from visual import (
+    LARGURA_PAINEL,
+    atualizar_popups,
+    desenhar_tela,
+    exibir_game_over,
+    exibir_informacoes,
+    novo_popup,
+)
 
 TILE_SIZE = 34
 SCREEN_WIDTH, SCREEN_HEIGHT = TILE_SIZE * 20, TILE_SIZE * 15
 FPS = 60  # Controla a velocidade da animação
 VELOCIDADE_BASE_FPS = 10
 VIDAS_INICIAIS = 3
-LARGURA_PAINEL = 200  # faixa à direita do labirinto onde fica o HUD
 PONTOS_FANTASMAS_COMIDOS = (200, 400, 800, 1600)
 PONTOS_VIDA_EXTRA = 10000
 FRUIT_VALUES = (100, 300, 500, 700, 1000, 2000, 3000, 5000)
@@ -225,6 +231,7 @@ def main():
     jogo_encerrado = False
     vida_extra_concedida = False
     combo_fantasmas = 0
+    popups = []
 
     # Cópia do mapa para controlar pontos coletados
     mapa_atual = [linha[:] for linha in MAPA]
@@ -264,6 +271,7 @@ def main():
                 vidas = VIDAS_INICIAIS
                 vida_extra_concedida = False
                 combo_fantasmas = 0
+                popups = []
                 pontos_comidos_nivel = 0
                 pontos_liberacao = 0
                 usar_liberacao_pos_morte = False
@@ -280,7 +288,14 @@ def main():
 
         if jogo_encerrado:
             desenhar_tela(screen, mapa_atual, fantasmas, pacman, fruta_ativa)
-            exibir_informacoes(screen, nivel_atual, pontuacao, vidas, recorde)
+            exibir_informacoes(
+                screen,
+                nivel_atual,
+                pontuacao,
+                vidas,
+                recorde,
+                pontos_comidos_nivel / max(1, total_pontos_nivel),
+            )
             exibir_game_over(screen)
             pygame.display.flip()
             clock.tick(FPS)
@@ -352,6 +367,9 @@ def main():
 
         if fruta_ativa and col == fruta_ativa["col"] and row == fruta_ativa["row"]:
             pontuacao += fruta_ativa["valor"]
+            popups.append(
+                novo_popup(str(fruta_ativa["valor"]), centro_x, centro_y - TILE_SIZE, (255, 190, 90))
+            )
             fruta_ativa = None
 
         if not vida_extra_concedida and pontuacao >= PONTOS_VIDA_EXTRA:
@@ -372,6 +390,7 @@ def main():
                 fantasmas = criar_fantasmas(MAPA, apos_morte=True)
                 aplicar_velocidades(nivel_atual, pacman, fantasmas)
                 combo_fantasmas = 0
+                popups = []
                 pontos_liberacao = 0
                 usar_liberacao_pos_morte = True
                 fruta_ativa = None
@@ -385,10 +404,14 @@ def main():
 
             elif resultado_colisao == 2:  # Fantasma é comido
                 fantasma.foi_comido()
-                pontuacao += PONTOS_FANTASMAS_COMIDOS[
+                pontos_fantasma = PONTOS_FANTASMAS_COMIDOS[
                     min(combo_fantasmas, len(PONTOS_FANTASMAS_COMIDOS) - 1)
                 ]
+                pontuacao += pontos_fantasma
                 combo_fantasmas += 1
+                popups.append(
+                    novo_popup(str(pontos_fantasma), *fantasma._centro_atual(), (90, 205, 255))
+                )
 
         # Verificar se todos os pontos foram coletados
         pontos_restantes = 0
@@ -411,6 +434,7 @@ def main():
             fantasmas = criar_fantasmas(MAPA)
             aplicar_velocidades(nivel_atual, pacman, fantasmas)
             combo_fantasmas = 0
+            popups = []
             pontos_comidos_nivel = 0
             pontos_liberacao = 0
             usar_liberacao_pos_morte = False
@@ -423,216 +447,21 @@ def main():
             modo_global = modo_por_indice(nivel_atual, indice_modo)
             aplicar_modo_global(fantasmas, modo_global, inverter=False)
 
-        desenhar_tela(screen, mapa_atual, fantasmas, pacman, fruta_ativa)
+        popups = atualizar_popups(popups)
+        desenhar_tela(screen, mapa_atual, fantasmas, pacman, fruta_ativa, popups)
 
         # Exibir informações de nível e pontuação
-        exibir_informacoes(screen, nivel_atual, pontuacao, vidas, recorde)
+        exibir_informacoes(
+            screen,
+            nivel_atual,
+            pontuacao,
+            vidas,
+            recorde,
+            pontos_comidos_nivel / max(1, total_pontos_nivel),
+        )
 
         pygame.display.flip()
         clock.tick(FPS)
-
-
-def desenhar_tela(screen, mapa_atual, fantasmas, pacman, fruta_ativa=None):
-    """Desenha mapa, fantasmas e Pac-Man."""
-    screen.fill((0, 0, 0))
-
-    # Desenhar o mapa com paredes e pontos estilo Pac-Man clássico
-    for row in range(len(mapa_atual)):
-        for col in range(len(mapa_atual[0])):
-            tile_x = col * TILE_SIZE
-            tile_y = row * TILE_SIZE
-
-            if mapa_atual[row][col] == 1:  # Parede
-                # Desenhar paredes mais finas, estilo Pac-Man
-                margem = TILE_SIZE // 6
-
-                # Verificar paredes adjacentes para conectar visualmente
-                tem_parede_acima = row > 0 and mapa_atual[row - 1][col] == 1
-                tem_parede_abaixo = (
-                    row < len(mapa_atual) - 1 and mapa_atual[row + 1][col] == 1
-                )
-                tem_parede_esquerda = col > 0 and mapa_atual[row][col - 1] == 1
-                tem_parede_direita = (
-                    col < len(mapa_atual[0]) - 1 and mapa_atual[row][col + 1] == 1
-                )
-
-                # Cor de parede azul escuro (como no Pac-Man original)
-                cor_parede = (0, 0, 200)
-
-                # Desenhar o bloco central
-                pygame.draw.rect(
-                    screen,
-                    cor_parede,
-                    (
-                        tile_x + margem,
-                        tile_y + margem,
-                        TILE_SIZE - 2 * margem,
-                        TILE_SIZE - 2 * margem,
-                    ),
-                )
-
-                # Conectar com paredes adjacentes
-                if tem_parede_acima:
-                    pygame.draw.rect(
-                        screen,
-                        cor_parede,
-                        (tile_x + margem, tile_y, TILE_SIZE - 2 * margem, margem),
-                    )
-                if tem_parede_abaixo:
-                    pygame.draw.rect(
-                        screen,
-                        cor_parede,
-                        (
-                            tile_x + margem,
-                            tile_y + TILE_SIZE - margem,
-                            TILE_SIZE - 2 * margem,
-                            margem,
-                        ),
-                    )
-                if tem_parede_esquerda:
-                    pygame.draw.rect(
-                        screen,
-                        cor_parede,
-                        (tile_x, tile_y + margem, margem, TILE_SIZE - 2 * margem),
-                    )
-                if tem_parede_direita:
-                    pygame.draw.rect(
-                        screen,
-                        cor_parede,
-                        (
-                            tile_x + TILE_SIZE - margem,
-                            tile_y + margem,
-                            margem,
-                            TILE_SIZE - 2 * margem,
-                        ),
-                    )
-
-            elif mapa_atual[row][col] == 2:  # Ponto comum
-                pygame.draw.circle(
-                    screen,
-                    (255, 255, 0),
-                    (tile_x + TILE_SIZE // 2, tile_y + TILE_SIZE // 2),
-                    TILE_SIZE // 10,
-                )
-
-            elif mapa_atual[row][col] == 3:  # Casa dos fantasmas
-                pygame.draw.rect(
-                    screen, (150, 0, 0), (tile_x, tile_y, TILE_SIZE, TILE_SIZE)
-                )
-
-            elif mapa_atual[row][col] == 4:  # Bug crítico
-                desenhar_bug_critico(screen, tile_x, tile_y)
-
-    if fruta_ativa:
-        desenhar_fruta(screen, fruta_ativa)
-
-    # Desenhar fantasmas
-    for fantasma in fantasmas:
-        fantasma.desenhar(screen)
-
-    # Desenhar o Pacman por último para que fique por cima dos fantasmas quando os come
-    pacman.desenhar(screen)
-
-
-@functools.lru_cache(maxsize=None)
-def _fonte(tamanho):
-    """SysFont é caro: cria cada tamanho uma única vez em vez de todo frame."""
-    return pygame.font.SysFont("Arial", tamanho, bold=True)
-
-
-def exibir_informacoes(screen, nivel, pontuacao, vidas, recorde):
-    """Exibe nível, pontuação, vidas e recorde no painel à direita do labirinto."""
-    x = screen.get_width() - LARGURA_PAINEL + 20
-    y = 24
-    for rotulo, valor in (
-        ("Nível", nivel),
-        ("Pontuação", pontuacao),
-        ("Vidas", vidas),
-        ("Recorde", recorde),
-    ):
-        screen.blit(_fonte(18).render(rotulo, True, (170, 170, 170)), (x, y))
-        screen.blit(_fonte(30).render(str(valor), True, (255, 255, 255)), (x, y + 22))
-        y += 72
-
-
-def exibir_game_over(screen):
-    """Exibe a tela de fim de jogo centralizada sobre o labirinto."""
-    titulo = _fonte(52).render("GAME OVER", True, (255, 220, 80))
-    instrucao = _fonte(24).render("Pressione R para reiniciar", True, (255, 255, 255))
-    largura = screen.get_width() - LARGURA_PAINEL
-    altura = screen.get_height()
-    screen.blit(titulo, titulo.get_rect(center=(largura // 2, altura // 2 - 30)))
-    screen.blit(instrucao, instrucao.get_rect(center=(largura // 2, altura // 2 + 30)))
-
-
-def desenhar_bug_critico(screen, tile_x, tile_y):
-    """Desenha o item que deixa os fantasmas vulneráveis."""
-    centro_x = tile_x + TILE_SIZE // 2
-    centro_y = tile_y + TILE_SIZE // 2
-    pulso = abs(pygame.time.get_ticks() % 800 - 400) / 400
-    raio = int(TILE_SIZE * (0.22 + pulso * 0.04))
-    cor_corpo = (220, 45, 55)
-    cor_brilho = (255, 210, 90)
-    cor_linha = (35, 10, 20)
-
-    pygame.draw.circle(screen, cor_brilho, (centro_x, centro_y), raio + 4, 2)
-    pygame.draw.ellipse(
-        screen, cor_corpo, (centro_x - raio, centro_y - raio, raio * 2, raio * 2)
-    )
-    pygame.draw.line(
-        screen,
-        cor_linha,
-        (centro_x, centro_y - raio + 2),
-        (centro_x, centro_y + raio - 2),
-        2,
-    )
-    pygame.draw.circle(
-        screen, cor_linha, (centro_x - raio // 3, centro_y - raio // 3), 2
-    )
-    pygame.draw.circle(
-        screen, cor_linha, (centro_x + raio // 3, centro_y - raio // 3), 2
-    )
-
-    for offset_y in (-raio // 2, 0, raio // 2):
-        pygame.draw.line(
-            screen,
-            cor_linha,
-            (centro_x - raio + 2, centro_y + offset_y),
-            (centro_x - raio - 5, centro_y + offset_y - 3),
-            2,
-        )
-        pygame.draw.line(
-            screen,
-            cor_linha,
-            (centro_x + raio - 2, centro_y + offset_y),
-            (centro_x + raio + 5, centro_y + offset_y - 3),
-            2,
-        )
-
-
-def desenhar_fruta(screen, fruta):
-    """Desenha a fruta bônus no centro do labirinto."""
-    centro_x = fruta["col"] * TILE_SIZE + TILE_SIZE // 2
-    centro_y = fruta["row"] * TILE_SIZE + TILE_SIZE // 2
-    valor = fruta["valor"]
-    cor = (255, 60, 90) if valor < 1000 else (255, 180, 40)
-    brilho = (255, 240, 170)
-
-    pygame.draw.circle(screen, brilho, (centro_x, centro_y), TILE_SIZE // 3, 2)
-    pygame.draw.circle(screen, cor, (centro_x - 4, centro_y + 2), TILE_SIZE // 5)
-    pygame.draw.circle(screen, cor, (centro_x + 6, centro_y + 1), TILE_SIZE // 5)
-    pygame.draw.line(
-        screen,
-        (70, 180, 80),
-        (centro_x + 2, centro_y - 7),
-        (centro_x + 9, centro_y - 14),
-        3,
-    )
-    pygame.draw.ellipse(
-        screen,
-        (80, 210, 90),
-        (centro_x + 5, centro_y - 18, 12, 8),
-    )
 
 
 def encontrar_posicao_inicial(mapa):

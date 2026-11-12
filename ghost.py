@@ -5,6 +5,7 @@ from collections import deque
 import pygame
 
 from maze_generator import CASA_FANTASMA, PAREDE
+from visual import desenhar_brilho
 
 # A ordem das direções é a preferência de desempate do Pac-Man original.
 DIRECOES = {
@@ -16,19 +17,71 @@ DIRECOES = {
 OPOSTA = {"up": "down", "down": "up", "left": "right", "right": "left"}
 ORDEM_PREFERENCIA = {"up": 0, "left": 1, "down": 2, "right": 3}
 
+COR_PERSONALIDADE = {
+    "perseguidor": (255, 70, 70),
+    "emboscador": (255, 150, 220),
+    "vagante": (0, 230, 235),
+    "imprevisível": (255, 170, 40),
+}
+COR_VULNERAVEL = (70, 100, 255)
+COR_PISCANDO = (255, 255, 255)
+
 EPSILON = 1e-6
 # Teto de segmentos (tile -> tile) percorridos em um único frame.
 MAX_SEGMENTOS_POR_FRAME = 4
 
 
 class GhostSprite:
-    """Gerencia os sprites dos fantasmas"""
+    """Avatar circular do fantasma, recortado sem distorcer o rosto."""
 
-    def __init__(self, image_path, tamanho=30):
-        self.image = pygame.image.load(image_path)
+    ESPESSURA_ANEL = 3
+
+    def __init__(self, image_path, tamanho=34):
+        self.tamanho = tamanho
+        original = pygame.image.load(image_path)
         if pygame.display.get_surface() is not None:
-            self.image = self.image.convert_alpha()
-        self.image = pygame.transform.scale(self.image, (tamanho, tamanho))
+            original = original.convert_alpha()
+        self.rosto = self._recortar_rosto(original, tamanho - 2 * self.ESPESSURA_ANEL)
+        self._cache = {}
+
+    @staticmethod
+    def _recortar_rosto(imagem, lado):
+        """Recorta um quadrado a partir do topo (onde fica o rosto) e redimensiona."""
+        largura, altura = imagem.get_size()
+        quadrado = min(largura, altura)
+        esquerda = (largura - quadrado) // 2
+        topo = int((altura - quadrado) * 0.15)
+        recorte = imagem.subsurface((esquerda, topo, quadrado, quadrado))
+        try:
+            return pygame.transform.smoothscale(recorte, (lado, lado))
+        except ValueError:  # formatos sem suporte a smoothscale
+            return pygame.transform.scale(recorte, (lado, lado))
+
+    def avatar(self, cor_anel, tinta=None):
+        """Rosto em círculo com anel colorido; `tinta` é um RGBA opcional por cima."""
+        chave = (cor_anel, tinta)
+        if chave not in self._cache:
+            tamanho = self.tamanho
+            borda = self.ESPESSURA_ANEL
+            interno = tamanho - 2 * borda
+            superficie = pygame.Surface((tamanho, tamanho), pygame.SRCALPHA)
+            pygame.draw.circle(superficie, (18, 18, 30), (tamanho // 2, tamanho // 2), tamanho // 2)
+
+            rosto = self.rosto.copy()
+            if tinta is not None:
+                camada = pygame.Surface((interno, interno), pygame.SRCALPHA)
+                camada.fill(tinta)
+                rosto.blit(camada, (0, 0))
+            mascara = pygame.Surface((interno, interno), pygame.SRCALPHA)
+            pygame.draw.circle(mascara, (255, 255, 255, 255), (interno // 2, interno // 2), interno // 2)
+            rosto.blit(mascara, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            superficie.blit(rosto, (borda, borda))
+
+            pygame.draw.circle(
+                superficie, cor_anel, (tamanho // 2, tamanho // 2), tamanho // 2, borda
+            )
+            self._cache[chave] = superficie
+        return self._cache[chave]
 
 
 class Ghost:
@@ -604,77 +657,32 @@ class Ghost:
         return 0  # Sem colisão
 
     # ---------------------------------------------------------------- desenho
+    def _desenhar_olhos(self, screen, centro_x, centro_y):
+        """Fantasma comido: só os olhos, que olham para onde ele está indo."""
+        dx, dy = DIRECOES[self.direcao_atual]
+        for lado in (-1, 1):
+            olho = (centro_x + lado * 6, centro_y - 2)
+            pygame.draw.ellipse(screen, (255, 255, 255), (olho[0] - 5, olho[1] - 7, 10, 14))
+            pygame.draw.circle(screen, (40, 70, 255), (olho[0] + dx * 2, olho[1] + dy * 3), 3)
+
     def desenhar(self, screen):
         """Desenha o fantasma na tela"""
-        sprite_x = self.x + (self.tile_size - self.sprite.image.get_width()) / 2
-        sprite_y = self.y + (self.tile_size - self.sprite.image.get_height()) / 2
-        screen.blit(self.sprite.image, (sprite_x, sprite_y))
+        centro_x, centro_y = self._centro_atual()
+        centro_x = int(centro_x)
+        centro_y = int(centro_y + math.sin(self.tempo_total * 0.12) * 1.2)
 
-        # Mostrar estado visualmente com overlays
-        overlay = pygame.Surface((self.tile_size, self.tile_size), pygame.SRCALPHA)
+        if self.estado == self.COMIDO:
+            self._desenhar_olhos(screen, centro_x, centro_y)
+            return
 
+        tinta = None
         if self.estado == self.VULNERAVEL:
-            # Piscar quando o tempo de vulnerabilidade estiver acabando
-            if self.tempo_vulneravel < 100 and self.tempo_vulneravel % 20 < 10:
-                overlay.fill((255, 255, 255, 100))  # Branco piscando
-            else:
-                overlay.fill((0, 0, 255, 150))  # Azul semi-transparente (vulnerável)
-            screen.blit(overlay, (self.x, self.y))
+            piscando = self.tempo_vulneravel < 120 and (self.tempo_vulneravel // 10) % 2 == 0
+            cor = COR_PISCANDO if piscando else COR_VULNERAVEL
+            tinta = (255, 255, 255, 90) if piscando else (30, 60, 255, 130)
+        else:
+            cor = COR_PERSONALIDADE.get(self.personalidade, COR_PERSONALIDADE["imprevisível"])
 
-        elif self.estado == self.COMIDO:
-            # Fantasma comido (apenas olhos)
-            overlay.fill((0, 0, 0, 200))  # Preto semi-transparente
-            screen.blit(overlay, (self.x, self.y))
-
-            olho_raio = self.tile_size // 6
-            olho_y = self.y + self.tile_size // 3
-            for fracao in (1, 2):
-                olho_x = self.x + fracao * self.tile_size // 3 - olho_raio // 2
-                pygame.draw.circle(
-                    screen,
-                    (255, 255, 255),
-                    (olho_x + olho_raio, olho_y + olho_raio),
-                    olho_raio,
-                )
-
-        else:  # NORMAL
-            # Efeito de brilho sutil de acordo com a personalidade
-            cores = {
-                "perseguidor": (255, 0, 0, 50),
-                "emboscador": (255, 192, 203, 50),
-                "vagante": (0, 255, 255, 50),
-            }
-            overlay.fill(cores.get(self.personalidade, (255, 165, 0, 50)))
-            screen.blit(overlay, (self.x, self.y))
-
-        # Indicador de direção (pequena seta na direção atual)
-        if self.estado != self.COMIDO:
-            seta_tamanho = self.tile_size // 6
-            centro_x, centro_y = self._centro_atual()
-
-            if self.direcao_atual == "right":
-                pontos = [
-                    (centro_x, centro_y),
-                    (centro_x + seta_tamanho, centro_y - seta_tamanho // 2),
-                    (centro_x + seta_tamanho, centro_y + seta_tamanho // 2),
-                ]
-            elif self.direcao_atual == "left":
-                pontos = [
-                    (centro_x, centro_y),
-                    (centro_x - seta_tamanho, centro_y - seta_tamanho // 2),
-                    (centro_x - seta_tamanho, centro_y + seta_tamanho // 2),
-                ]
-            elif self.direcao_atual == "up":
-                pontos = [
-                    (centro_x, centro_y),
-                    (centro_x - seta_tamanho // 2, centro_y - seta_tamanho),
-                    (centro_x + seta_tamanho // 2, centro_y - seta_tamanho),
-                ]
-            else:  # "down"
-                pontos = [
-                    (centro_x, centro_y),
-                    (centro_x - seta_tamanho // 2, centro_y + seta_tamanho),
-                    (centro_x + seta_tamanho // 2, centro_y + seta_tamanho),
-                ]
-
-            pygame.draw.polygon(screen, (255, 255, 255), pontos)
+        desenhar_brilho(screen, cor, (centro_x, centro_y), 26, 0.5)
+        imagem = self.sprite.avatar(cor, tinta)
+        screen.blit(imagem, imagem.get_rect(center=(centro_x, centro_y)))
